@@ -44,7 +44,6 @@ export const EXECUTE_FLAGS = [
   '--continue-on-failure',
   '--headed',
   '--confirm-authorized',
-  '--safe-test-mode',
   '--no-screenshots',
 ] as const;
 
@@ -58,6 +57,10 @@ export interface ParsedExecuteArgs {
   headed: boolean;
   /** The safety gate. Absent means the run is refused. */
   confirmAuthorized: boolean;
+  /**
+   * Always true. Safe test mode is the default and has no opt-out in this
+   * milestone, so a live payment path cannot be enabled from the CLI.
+   */
   safeTestMode: boolean;
   screenshots: boolean;
   valid: boolean;
@@ -126,7 +129,8 @@ export function parseExecuteArgs(argv: readonly string[]): ParsedExecuteArgs {
   parsed.continueOnFailure = scan.flags.has('--continue-on-failure');
   parsed.headed = scan.flags.has('--headed');
   parsed.confirmAuthorized = scan.flags.has('--confirm-authorized');
-  parsed.safeTestMode = scan.flags.has('--safe-test-mode');
+  // Safe test mode cannot be turned off, so it is not a parsed flag.
+  parsed.safeTestMode = true;
   parsed.screenshots = !scan.flags.has('--no-screenshots');
 
   return parsed;
@@ -156,8 +160,12 @@ Options:
   --timeout <ms>              Per-step timeout (default: ${DEFAULT_STEP_TIMEOUT_MS})
   --continue-on-failure       Attempt later steps after a failure instead of stopping
   --headed                    Run with a visible browser window
-  --safe-test-mode            Permit payment-adjacent actions. Off by default.
   --no-screenshots            Do not capture screenshots
+
+Safe test mode is always on and cannot be disabled: payment-adjacent actions
+are blocked before any browser interaction, and no live payment path exists.
+Screenshots stop once test data has entered the page, because a bitmap cannot
+be redacted the way the JSON report can.
 
 Build 3 attempts a journey. It performs no retries, does not reproduce
 failures, does not classify anomalies, and does not confirm bugs. Those belong
@@ -213,11 +221,9 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
     }
   }
 
-  // --- gate 4: safe test mode cannot be used without a declared purpose ----
-  if (args.safeTestMode && !args.confirmAuthorized) {
-    console.error('Refusing to execute: --safe-test-mode requires --confirm-authorized.');
-    return 1;
-  }
+  // --- gate 4: safe test mode is unconditional ----------------------------
+  // There is no flag that disables the payment guard, so there is nothing to
+  // validate here beyond keeping the authorization check above it.
 
   const outputAbsolute = resolve(process.cwd(), args.outputPath);
   // Screenshots live beside the report, in an `evidence/` directory at the repo
@@ -229,7 +235,7 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
   console.log(`Goal:    ${plan.goal}`);
   console.log(`Target:  ${plan.target.url}`);
   if (args.dataPath) console.log(`Test data: ${args.dataPath} (${Object.keys(testData ?? {}).length} key(s), values never logged)`);
-  if (args.safeTestMode) console.log('Safe test mode: payment-adjacent actions are permitted for this run.');
+  console.log('Safe test mode: ON (payment actions are blocked; this cannot be disabled)');
   console.log('Executing journey steps...');
 
   let report;

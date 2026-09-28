@@ -14,8 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import { chromium } from 'playwright';
 import { executeJourney } from '../../src/executor/executor.js';
-import { validateJourneyPlan } from '../../src/executor/planValidator.js';
-import { startFixtureServer, stopFixtureServer } from '../fixtures/server.js';
+import { validateJourneyPlan } from '../../src/executor/planValidator.js';import { startFixtureServer, stopFixtureServer } from '../fixtures/server.js';
 import { planWith, step } from '../fixtures/journeyPlans.js';
 import type { ExecutionReport } from '../../src/executor/types.js';
 import type { JourneyPlan, JourneyStep } from '../../src/journey/types.js';
@@ -116,11 +115,18 @@ describe('executor: locating and observing', () => {
     expect(report.steps[0]?.error?.message).toMatch(/matched 2 elements/);
   });
 
-  it('blocks a step with no locator candidates at all', async () => {
-    const report = await run([step({ id: 'step-001', order: 1, action: 'observe', locatorCandidates: [] })]);
+  it('skips a step with no locator candidates rather than blocking', async () => {
+    // A step with nothing to act on is an observation, not a safety refusal.
+    // Blocking it would abort a run that could still act on later steps.
+    const report = await run([
+      step({ id: 'step-001', order: 1, action: 'observe', locatorCandidates: [] }),
+      step({ id: 'step-002', order: 2, action: 'observe', locatorCandidates: [testId('simple-button')] }),
+    ]);
     if (!report) return;
-    expect(report.steps[0]?.status).toBe('blocked');
-    expect(report.steps[0]?.error?.reason).toBe('no-locator-provided');
+    expect(report.steps[0]?.status).toBe('skipped');
+    expect(report.steps[0]?.error).toBeNull();
+    // The run continues and the next step is still attempted.
+    expect(report.steps[1]?.status).toBe('passed');
   });
 
   it('blocks an unsupported locator form', async () => {
@@ -322,24 +328,47 @@ describe('executor: submit and payment safety', () => {
     expect(report.status).toBe('passed');
   });
 
-  it('blocks a payment-adjacent action by default', async () => {
-    const report = await run([
-      step({ id: 'step-001', order: 1, action: 'click', locatorCandidates: [testId('pay-now')] }),
-    ]);
+  it('blocks a payment-adjacent action, and safe mode cannot be turned off', async () => {
+    const report = await run([step({ id: 'step-001', order: 1, action: 'click', locatorCandidates: [testId('pay-now')] })]);
     if (!report) return;
+    // Safe test mode is on by default, so this blocks with no opt-in flag.
     expect(report.steps[0]?.status).toBe('blocked');
     expect(report.steps[0]?.error?.reason).toBe('payment-blocked');
-    expect(report.steps[0]?.error?.message).toMatch(/cannot verify the target is a sandbox/);
+    expect(report.steps[0]?.error?.message).toMatch(/before any browser action/);
+    expect(report.executor.safeTestMode).toBe(true);
   });
 
-  it('permits a payment-adjacent action in safe test mode', async () => {
+  it('blocks a payment-adjacent fill so no card data is typed', async () => {
     const report = await run(
-      [step({ id: 'step-001', order: 1, action: 'click', locatorCandidates: [testId('pay-now')] })],
-      { safeTestMode: true },
+      [step({ id: 'step-001', order: 1, intent: 'identify_card_number_field', action: 'fill', locatorCandidates: [testId('card')] })],
+      { testData: { cardNumber: '4242424242424242' } },
     );
     if (!report) return;
-    expect(report.steps[0]?.status).toBe('passed');
-    expect(report.executor.safeTestMode).toBe(true);
+    // Typing a card number is a step toward a charge even if submit is never
+    // reached, so the guard runs before the fill.
+    expect(report.steps[0]?.status).toBe('blocked');
+    expect(report.steps[0]?.error?.reason).toBe('payment-blocked');
+    expect(JSON.stringify(report)).not.toContain('4242424242424242');
+  });
+
+  it('blocks payment submission when the journey type is transactional', async () => {
+    // A checkout journey is transactional by nature, so a submit inside one is
+    // blocked regardless of how neutrally the step is worded.
+    const checkoutPlan = validateJourneyPlan(
+      JSON.parse(
+        JSON.stringify(
+          planWith([step({ id: 'step-001', order: 1, intent: 'complete_step', action: 'submit', locatorCandidates: [testId('submit-signup')] })], {
+            journeyType: 'checkout',
+            target: { url: `${origin}/executor`, finalUrl: null, title: 'x' },
+          }),
+        ),
+      ),
+      'test.json',
+    );
+    if (!available) return;
+    const report = await executeJourney({ plan: checkoutPlan, planPath: 'reports/journey.json', screenshots: false });
+    expect(report.steps[0]?.status).toBe('blocked');
+    expect(report.steps[0]?.error?.reason).toBe('payment-blocked');
   });
 });
 

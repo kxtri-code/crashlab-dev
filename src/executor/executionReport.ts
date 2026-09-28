@@ -98,7 +98,9 @@ export function buildExecutionReport(input: {
       retries: 0,
       stoppedOnFailure: input.stoppedOnFailure,
       continueOnFailure: input.options.continueOnFailure === true,
-      safeTestMode: input.options.safeTestMode === true,
+      // Always true in this milestone: safe test mode has no opt-out, so a
+      // live payment path cannot be enabled.
+      safeTestMode: true,
     },
   };
 }
@@ -157,9 +159,13 @@ export function summarizeExecution(report: ExecutionReport): string {
   lines.push(`  Network events:  ${evidence.networkEvents.length}`);
   lines.push(`  Screenshots:     ${evidence.screenshots.length}`);
   lines.push(`  Sensitive values redacted: ${report.redaction.sensitiveValuesRedacted ? 'yes' : 'no'}`);
+  if (report.redaction.screenshotsOmittedAfterSensitiveData) {
+    lines.push('  Screenshots omitted after test data entered the page (a bitmap cannot be redacted).');
+  }
   lines.push('');
 
   lines.push(`Execution finished: ${report.status}. Retries: ${report.executor.retries}.`);
+  lines.push(`Safe test mode: ${report.executor.safeTestMode ? 'on (payment actions blocked)' : 'off'}.`);
   lines.push('A failed or blocked step is an observation about this run, not a confirmed bug.');
   lines.push('Anomaly detection belongs to Build 4; reproduction belongs to Build 5.');
 

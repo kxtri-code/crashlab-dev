@@ -14,6 +14,7 @@
  */
 
 import type { JourneyAction, JourneyStep } from '../journey/types.js';
+import type { Locator } from 'playwright';
 import { join } from 'node:path';
 import { resolveStepTarget } from './locatorResolver.js';
 import { resolveFixturePath, resolveValue } from './testData.js';
@@ -35,12 +36,30 @@ function failure(context: ExecutionContext, step: JourneyStep, error: unknown): 
   return { status: 'failed', reason: 'action-failed', message: `Step "${step.id}" failed: ${message}` };
 }
 
+/**
+ * Read a locator's visible text for the payment guard.
+ *
+ * Returns null rather than throwing when the page is gone or the text is
+ * unreadable: the guard treats a missing text as no evidence, not as a pass.
+ */
+async function safeText(locator: Locator): Promise<string | null> {
+  try {
+    return await locator.first().textContent({ timeout: 1000 });
+  } catch {
+    return null;
+  }
+}
+
 /** The narrowed success branch of a locator resolution. */
 type ResolvedTarget = Extract<Awaited<ReturnType<typeof resolveStepTarget>>, { ok: true }>;
 
 /**
- * Resolve a step's target, or return the block outcome that prevented it.
- * Keeps every handler from repeating the same branch.
+ * Resolve a step's target, or return the outcome that prevented it.
+ *
+ * A step with no locator candidates is *skipped*, not blocked: there is simply
+ * nothing to act on, which is a legitimate result of a plan that matched
+ * nothing. Blocking would refuse on safety grounds and, under the stop policy,
+ * would abort a run that could still make progress on later steps.
  */
 async function resolveOrBlock(
   step: JourneyStep,
@@ -49,6 +68,16 @@ async function resolveOrBlock(
 ): Promise<{ outcome: ActionOutcome } | { target: ResolvedTarget }> {
   const resolution = await resolveStepTarget(context.page, step, intent);
   if (!resolution.ok) {
+    if (resolution.reason === 'no-locator-provided') {
+      return {
+        outcome: {
+          status: 'skipped',
+          reason: resolution.reason,
+          message: resolution.message,
+          observations: null,
+        },
+      };
+    }
     return {
       outcome: {
         status: 'blocked',
@@ -105,11 +134,13 @@ const identify: ActionHandler = async (step, context) => {
 // --- click ----------------------------------------------------------------
 
 const click: ActionHandler = async (step, context) => {
-  const paymentGuard = context.guardPayment(step);
-  if (paymentGuard) return paymentGuard;
-
+  // Resolve first so the payment guard can also read the live control's text;
+  // the guard still runs before any click happens.
   const resolved = await resolveOrBlock(step, context, 'interact');
   if ('outcome' in resolved) return resolved.outcome;
+
+  const paymentGuard = context.guardPayment(step, await safeText(resolved.target.locator));
+  if (paymentGuard) return paymentGuard;
 
   const urlBefore = context.currentUrl();
   try {
@@ -145,6 +176,11 @@ const click: ActionHandler = async (step, context) => {
 const fill: ActionHandler = async (step, context) => {
   const resolved = await resolveOrBlock(step, context, 'interact');
   if ('outcome' in resolved) return resolved.outcome;
+
+  // A fill into a payment field is blocked as well as a payment click: typing a
+  // card number is a step toward a charge even if the submit is never reached.
+  const paymentGuard = context.guardPayment(step, await safeText(resolved.target.locator));
+  if (paymentGuard) return paymentGuard;
 
   const lookup = resolveValue(context.testData, { elementIds: step.targetElementIds, intent: step.intent });
   if (!lookup.found) {
@@ -276,11 +312,11 @@ const upload: ActionHandler = async (step, context) => {
  * nothing about whether the outcome was correct.
  */
 const submit: ActionHandler = async (step, context) => {
-  const paymentGuard = context.guardPayment(step);
-  if (paymentGuard) return paymentGuard;
-
   const resolved = await resolveOrBlock(step, context, 'interact');
   if ('outcome' in resolved) return resolved.outcome;
+
+  const paymentGuard = context.guardPayment(step, await safeText(resolved.target.locator));
+  if (paymentGuard) return paymentGuard;
 
   const urlBefore = context.currentUrl();
   try {

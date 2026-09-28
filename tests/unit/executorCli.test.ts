@@ -78,14 +78,23 @@ describe('parseExecuteArgs', () => {
   });
 
   it('reads the boolean switches', () => {
-    const args = parseExecuteArgs(['--continue-on-failure', '--headed', '--confirm-authorized', '--safe-test-mode', '--no-screenshots']);
+    const args = parseExecuteArgs(['--continue-on-failure', '--headed', '--confirm-authorized', '--no-screenshots']);
     expect(args).toMatchObject({
       continueOnFailure: true,
       headed: true,
       confirmAuthorized: true,
-      safeTestMode: true,
       screenshots: false,
     });
+  });
+
+  it('has safe test mode on by default with no way to turn it off', () => {
+    // Safe test mode is unconditional, so there is no opt-in flag to pass and
+    // no opt-out flag that could be used to re-enable a live payment.
+    expect(parseExecuteArgs([]).safeTestMode).toBe(true);
+    expect(parseExecuteArgs(['--confirm-authorized']).safeTestMode).toBe(true);
+    expect(EXECUTE_FLAGS).not.toContain('--safe-test-mode' as never);
+    expect(EXECUTE_FLAGS).not.toContain('--unsafe' as never);
+    expect(parseExecuteArgs(['--safe-test-mode']).valid).toBe(false);
   });
 
   it('does not confirm authorization by default', () => {

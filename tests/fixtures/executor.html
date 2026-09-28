@@ -51,6 +51,10 @@
       <!-- 9. a payment-adjacent control -->
       <button type="button" id="pay-now" data-testid="pay-now">Pay now</button>
 
+      <!-- 9b. a payment field, to prove no card data is ever typed -->
+      <label for="card">Card number</label>
+      <input id="card" name="card" type="text" data-testid="card" placeholder="1234 1234 1234 1234" />
+
       <!-- 10. a link that leaves the origin, for the origin guard -->
       <a id="external-link" href="https://example.invalid/elsewhere" data-testid="external-link">External</a>
     </main>

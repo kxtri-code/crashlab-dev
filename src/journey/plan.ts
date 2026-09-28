@@ -27,6 +27,12 @@ import { normalizeGoal, tokenize } from './goal.js';
 import { classifyGoal } from './classify.js';
 import { bestCandidate, confidenceForMatch, isLowConfidence, overallConfidence } from './confidence.js';
 import { matchRoles, requiresCredentials, requiresPayment, rolesForJourney } from './match.js';
+import {
+  AUTH_ACTION_TEXTS,
+  PURCHASE_ACTION_TEXTS,
+  SUBMIT_ACTION_TEXTS,
+  decideAction,
+} from './actionability.js';
 import type { ElementRole, RoleMatch, RoleSpec } from './match.js';
 import { extractElements } from './scoutLoader.js';
 import { TOOL_VERSION } from '../version.js';
@@ -34,7 +40,15 @@ import { TOOL_VERSION } from '../version.js';
 /** A step template for one journey type, evaluated against the Scout data. */
 interface StepTemplate {
   intent: string;
+  /** The action used when the match is not strong enough to act on. */
   action: JourneyAction;
+  /**
+   * The action used when the match is strong, unique, visible and enabled.
+   * Omitted for structural steps, which never carry a target.
+   */
+  actionable?: JourneyAction;
+  /** Exact element text that would justify `actionable`. Empty skips the gate. */
+  requiredText?: readonly string[];
   /** Reads the step's description and outcome from what actually matched. */
   describe: (context: StepContext) => { description: string; expectedOutcome: string };
   /** The element role this step targets, when it targets one. */
@@ -48,6 +62,8 @@ interface StepContext {
   journeyType: JourneyType;
   match: RoleMatch | null;
   hasAnyCandidate: boolean;
+  /** Why the step stayed observational despite a match, when applicable. */
+  inertBecause: string | null;
 }
 
 /** Human-readable role names, used in step descriptions. */
@@ -108,6 +124,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_username_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'username_field',
           isRequired: true,
           describe: (ctx) =>
@@ -121,6 +138,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_password_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'password_field',
           isRequired: true,
           describe: (ctx) =>
@@ -134,6 +152,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_login_submission',
           action: 'identify',
+          actionable: 'click',
+          requiredText: AUTH_ACTION_TEXTS,
           role: 'login_control',
           isRequired: true,
           describe: (ctx) =>
@@ -174,6 +194,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_name_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'name_field',
           describe: (ctx) =>
             ctx.hasAnyCandidate
@@ -183,6 +204,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_username_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'username_field',
           isRequired: true,
           describe: (ctx) =>
@@ -193,6 +215,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_password_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'password_field',
           isRequired: true,
           describe: (ctx) =>
@@ -206,6 +229,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_password_confirmation',
           action: 'identify',
+          actionable: 'fill',
           role: 'confirm_password_field',
           describe: (ctx) =>
             ctx.hasAnyCandidate
@@ -215,6 +239,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_registration_submission',
           action: 'identify',
+          actionable: 'click',
+          requiredText: AUTH_ACTION_TEXTS,
           role: 'register_control',
           isRequired: true,
           describe: (ctx) =>
@@ -254,6 +280,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_purchase_control',
           action: 'identify',
+          actionable: 'click',
+          requiredText: PURCHASE_ACTION_TEXTS,
           role: 'add_to_cart_control',
           isRequired: true,
           describe: (ctx) =>
@@ -264,6 +292,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_quantity_control',
           action: 'identify',
+          actionable: 'select',
           role: 'quantity_control',
           describe: (ctx) =>
             ctx.hasAnyCandidate
@@ -273,6 +302,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_checkout_control',
           action: 'identify',
+          actionable: 'click',
+          requiredText: PURCHASE_ACTION_TEXTS,
           role: 'checkout_control',
           isRequired: true,
           describe: (ctx) =>
@@ -281,6 +312,9 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
               : describeMissing(ctx, 'checkout control'),
         },
         {
+          // Deliberately inert. A payment or order-placement control is
+          // identified but never planned as an action, so a generated plan
+          // cannot reach a charge even before the executor's guard.
           intent: 'identify_payment_control',
           action: 'identify',
           role: 'payment_control',
@@ -319,6 +353,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_required_fields',
           action: 'identify',
+          actionable: 'select',
           role: 'select_field',
           isRequired: true,
           describe: (ctx) =>
@@ -329,6 +364,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_message_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'message_field',
           describe: (ctx) =>
             ctx.hasAnyCandidate
@@ -338,6 +374,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_file_field',
           action: 'identify',
+          actionable: 'upload',
           role: 'file_field',
           describe: (ctx) =>
             ctx.hasAnyCandidate
@@ -347,6 +384,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_submit_control',
           action: 'identify',
+          actionable: 'click',
+          requiredText: SUBMIT_ACTION_TEXTS,
           role: 'submit_control',
           isRequired: true,
           describe: (ctx) =>
@@ -369,6 +408,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'locate_search_control',
           action: 'identify',
+          actionable: 'fill',
           role: 'search_field',
           isRequired: true,
           describe: (ctx) => ({
@@ -379,6 +419,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_search_submission',
           action: 'identify',
+          actionable: 'click',
+          requiredText: SUBMIT_ACTION_TEXTS,
           role: 'search_control',
           isRequired: true,
           describe: (ctx) =>
@@ -411,6 +453,7 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_message_field',
           action: 'identify',
+          actionable: 'fill',
           role: 'message_field',
           isRequired: true,
           describe: (ctx) =>
@@ -421,6 +464,8 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_contact_submission',
           action: 'identify',
+          actionable: 'click',
+          requiredText: SUBMIT_ACTION_TEXTS,
           role: 'contact_control',
           isRequired: true,
           describe: (ctx) =>
@@ -501,14 +546,33 @@ function buildSteps(
   templates: readonly StepTemplate[],
   matches: Map<ElementRole, RoleMatch>,
   scoutPath: string,
-): JourneyStep[] {
-  return templates.map((template, position) => {
+): { steps: JourneyStep[]; inertReasons: { intent: string; reason: string; detail: string }[] } {
+  const inertReasons: { intent: string; reason: string; detail: string }[] = [];
+
+  const steps = templates.map((template, position) => {
     const match = template.role ? (matches.get(template.role) ?? null) : null;
     const best = match ? bestCandidate(match) : null;
+
+    // Decide whether this step can carry a real action. A template without an
+    // `actionable` action is structural and never acts.
+    const decision = template.actionable
+      ? decideAction({
+          match,
+          observationAction: template.action,
+          actionAction: template.actionable,
+          requiredText: template.requiredText,
+        })
+      : { action: template.action, actionable: false, blockedBecause: null as { reason: string; detail: string } | null };
+
+    if (decision.blockedBecause) {
+      inertReasons.push({ intent: template.intent, ...decision.blockedBecause });
+    }
+
     const { description, expectedOutcome } = template.describe({
       journeyType,
       match,
       hasAnyCandidate: Boolean(best),
+      inertBecause: decision.blockedBecause?.reason ?? null,
     });
 
     const confidence = match
@@ -529,7 +593,7 @@ function buildSteps(
       id: `step-${String(position + 1).padStart(3, '0')}`,
       order: position + 1,
       intent: template.intent,
-      action: template.action,
+      action: decision.action,
       description,
       targetElementIds,
       locatorCandidates,
@@ -543,6 +607,8 @@ function buildSteps(
       },
     } satisfies JourneyStep;
   });
+
+  return { steps, inertReasons };
 }
 
 /** Deterministic, local, heuristic planner - the Build 2 default. */
@@ -558,7 +624,7 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
     const roles: readonly RoleSpec[] = rolesForJourney(journeyType);
     const matches = matchRoles(elements, roles, goalTokens);
 
-    const steps = buildSteps(journeyType, templatesFor(journeyType), matches, input.scoutPath);
+    const { steps, inertReasons } = buildSteps(journeyType, templatesFor(journeyType), matches, input.scoutPath);
 
     const { warnings, missingInformation, assumptions } = deriveDiagnostics({
       journeyType,
@@ -568,6 +634,7 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
       steps,
       elements,
       normalizedGoal,
+      inertReasons,
     });
 
     return {
@@ -601,6 +668,8 @@ interface DiagnosticInput {
   steps: readonly JourneyStep[];
   elements: ReturnType<typeof extractElements>;
   normalizedGoal: string;
+  /** Why a matched step stayed observational instead of becoming an action. */
+  inertReasons: readonly { intent: string; reason: string; detail: string }[];
 }
 
 /** Deduplicate while preserving first-seen order, for stable serialisation. */
@@ -619,10 +688,15 @@ function deriveDiagnostics(input: DiagnosticInput): {
   warnings: string[];
   missingInformation: string[];
 } {
-  const { journeyType, classification, matches, roles, steps, elements } = input;
+  const { journeyType, classification, matches, roles, steps, elements, inertReasons } = input;
   const assumptions: string[] = [];
   const warnings: string[] = [];
   const missingInformation: string[] = [];
+
+  // --- steps that stayed observational despite a match ---------------------
+  for (const inert of inertReasons) {
+    warnings.push(`Step "${inert.intent}" stays observational (${inert.reason}): ${inert.detail}`);
+  }
 
   // --- goal-level ambiguity ------------------------------------------------
   if (classification.ambiguous) {

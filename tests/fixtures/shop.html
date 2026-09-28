@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Blue Widget - CrashLab Fixture Shop</title>
+  </head>
+  <body>
+    <main>
+      <h1>Blue Widget</h1>
+      <p class="product">A single blue widget. Nothing is for sale and no payment is taken.</p>
+
+      <!-- The control the generated journey is expected to act on. -->
+      <button type="button" id="add-to-cart" data-testid="add-to-cart">Add to cart</button>
+      <button type="button" id="buy" data-testid="buy">Buy</button>
+
+      <!-- Result state that appears after the action, giving the journey a
+           deterministic post-action condition to observe. -->
+      <p id="cart-status" data-testid="cart-status">Cart is empty</p>
+
+      <!-- A generic navigation link, which must never become a purchase
+           action merely because it is a link. -->
+      <nav><a href="/help" id="help-link" data-testid="help-link">Help</a></nav>
+
+      <!-- A hidden purchase control: never a normal action target. -->
+      <button type="button" id="hidden-buy" data-testid="hidden-buy" style="display: none">Buy</button>
+
+      <!-- A disabled purchase control: likewise never actionable. -->
+      <button type="button" id="disabled-buy" data-testid="disabled-buy" disabled>Buy</button>
+
+      <!-- Two identical controls, to prove an ambiguous match stays inert. -->
+      <button type="button" class="buy-dup" data-testid="buy-dup-a">Buy</button>
+      <button type="button" class="buy-dup" data-testid="buy-dup-b">Buy</button>
+    </main>
+
+    <script>
+      // The result state the journey observes after clicking.
+      document.getElementById('add-to-cart').addEventListener('click', function () {
+        document.getElementById('cart-status').textContent = 'Item added to cart';
+      });
+      document.getElementById('buy').addEventListener('click', function () {
+        document.getElementById('cart-status').textContent = 'Widget added to cart';
+      });
+    </script>
+  </body>
+</html>

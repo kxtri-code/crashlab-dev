@@ -20,7 +20,7 @@ import type { JourneyStep } from '../journey/types.js';
 import { openBrowserSession } from '../scout/browser.js';
 import { dispatchAction } from './actionDispatcher.js';
 import { ExecutionContext } from './executionContext.js';
-import { createEvidenceRecorder } from './evidence.js';
+import { createEvidenceRecorder, ScreenshotPolicy } from './evidence.js';
 import { buildExecutionReport } from './executionReport.js';
 import { collectSecrets, createScrubber, redactMessage } from './redaction.js';
 import { isSensitiveTestDataKey } from './redaction.js';
@@ -59,6 +59,8 @@ function skippedResult(step: JourneyStep, reason: string): StepExecutionResult {
     observations: null,
     evidence: {
       screenshot: null,
+      screenshotOmitted: true,
+      screenshotOmittedReason: 'skipped-step',
       consoleEvents: [],
       pageErrors: [],
       networkEvents: [],
@@ -66,7 +68,7 @@ function skippedResult(step: JourneyStep, reason: string): StepExecutionResult {
       pageChanged: false,
     },
     error: {
-      // A skip is a consequence of an earlier failure, not a step failure.
+      // A skip records why, but is not a failure, so no structured reason.
       reason: 'action-failed',
       message: reason,
       attemptedLocators: [],
@@ -87,7 +89,11 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
   const plan = options.plan;
   const timeoutMs = options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
   const evidenceDir = options.evidenceDir ?? 'evidence';
-  const screenshotsEnabled = options.screenshots !== false;
+  // Safe test mode is the default and cannot be turned off in this milestone.
+  // A live payment path does not exist in CrashLab.
+  const safeTestMode = options.safeTestMode !== false;
+  // One policy for the whole run, told up front whether screenshots are on.
+  const screenshotPolicy = new ScreenshotPolicy({ enabled: options.screenshots !== false });
 
   // Secrets from test data are known before anything can echo them, so the
   // scrubber is in place for the very first console message.
@@ -105,6 +111,7 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
   let stoppedOnFailure = false;
   let finalUrl: string | null = null;
   let redactedValueCount = 0;
+  let omittedAfterSensitiveData = false;
 
   const browserSession = await openBrowserSession({
     headless: options.headed !== true,
@@ -126,7 +133,7 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       evidence,
       scrub,
       timeoutMs,
-      safeTestMode: options.safeTestMode === true,
+      safeTestMode,
       testData: options.testData,
     });
     executionContext.installDialogHandler();
@@ -147,8 +154,8 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       );
     }
 
-    const initialShot = await evidence.screenshot(page, 'initial', evidenceDir, screenshotsEnabled);
-    if (initialShot) screenshots.push(initialShot);
+    const initialShot = await evidence.screenshot(page, 'initial', evidenceDir, screenshotPolicy);
+    if (initialShot.path) screenshots.push(initialShot.path);
 
     // --- run the steps ---------------------------------------------------
     for (const step of plan.steps) {
@@ -164,19 +171,31 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       const outcome = await dispatchAction(step, executionContext);
       const urlAfter = executionContext.currentUrl();
 
-      const evidenceSuffix = outcome.status === 'passed' ? 'after' : 'failure';
+      // A skipped step is an observation, not a failure, so it gets no error
+      // object and no failure screenshot naming.
+      const evidenceSuffix = outcome.status === 'passed' || outcome.status === 'skipped' ? 'after' : 'failure';
       const shotName = `${step.id}-${evidenceSuffix}`;
+
+      // Mark the page sensitive *before* screenshotting this step. The value is
+      // already in the DOM the moment the fill returned, so capturing first
+      // would photograph it.
+      if (outcome.notes?.some((note) => note.includes('valueRedacted=true'))) {
+        redactedValueCount += 1;
+        screenshotPolicy.markSensitive();
+      }
+
       const stepEvidence = await evidence.stepEvidence(
         page,
         shotName,
         evidenceDir,
-        screenshotsEnabled,
+        screenshotPolicy,
         urlBefore,
         urlAfter,
       );
       if (stepEvidence.screenshot) screenshots.push(stepEvidence.screenshot);
-
-      if (outcome.notes?.some((note) => note.includes('valueRedacted=true'))) redactedValueCount += 1;
+      if (stepEvidence.screenshotOmitted && stepEvidence.screenshotOmittedReason === 'sensitive-data-entered') {
+        omittedAfterSensitiveData = true;
+      }
 
       stepResults.push({
         id: step.id,
@@ -196,7 +215,7 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
         observations: outcome.observations ?? null,
         evidence: stepEvidence,
         error:
-          outcome.status === 'passed'
+          outcome.status === 'passed' || outcome.status === 'skipped'
             ? null
             : {
                 reason: outcome.reason ?? 'action-failed',
@@ -208,20 +227,27 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
         planConfidence: step.confidence,
       });
 
-      // Stop on a required-step failure unless explicitly told to continue.
-      if (outcome.status !== 'passed' && options.continueOnFailure !== true) {
-        aborted = true;
-        stoppedOnFailure = true;
-        warnings.push(
-          `Execution stopped after step "${step.id}" ${outcome.status}. ` +
-            'Re-run with --continue-on-failure to attempt the remaining steps.',
-        );
+      // Stop on a required-step failure unless explicitly told to continue. A
+      // skipped step is not a failure: the planner found no target, so there
+      // was nothing to attempt, and later steps may still be actionable.
+      if (outcome.status === 'failed' || outcome.status === 'blocked') {
+        if (options.continueOnFailure !== true) {
+          aborted = true;
+          stoppedOnFailure = true;
+          warnings.push(
+            `Execution stopped after step "${step.id}" ${outcome.status}. ` +
+              'Re-run with --continue-on-failure to attempt the remaining steps.',
+          );
+        }
       }
     }
 
     finalUrl = executionContext.currentUrl();
-    const finalShot = await evidence.screenshot(page, 'final', evidenceDir, screenshotsEnabled);
-    if (finalShot) screenshots.push(finalShot);
+    const finalShot = await evidence.screenshot(page, 'final', evidenceDir, screenshotPolicy);
+    if (finalShot.path) screenshots.push(finalShot.path);
+    if (finalShot.omitted && finalShot.omittedReason === 'sensitive-data-entered') {
+      omittedAfterSensitiveData = true;
+    }
 
     evidence.settle();
 
@@ -230,6 +256,7 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       redactedValueCount,
       dataProvided: options.testData !== undefined,
       dataProvidedKeys: Object.keys(options.testData ?? {}).filter((key) => isSensitiveTestDataKey(key)).sort(),
+      screenshotsOmittedAfterSensitiveData: omittedAfterSensitiveData,
     };
 
     return buildExecutionReport({

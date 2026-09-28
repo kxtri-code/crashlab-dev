@@ -17,15 +17,29 @@ import { toOrigin } from '../util/url.js';
 const INTERACTIVE_ACTIONS = new Set(['click', 'fill', 'select', 'upload', 'submit']);
 
 /**
- * Substrings that mark a control as payment-adjacent.
+ * Payment signals, checked as several independent layers.
  *
- * Build 3 cannot tell a sandbox from production, so it refuses to act on a
- * payment control unless the run explicitly declares safe test mode. This is a
- * blunt text check on the plan's own wording, not an attempt to classify the
- * target.
+ * A single regex is not enough: a step can be payment-adjacent through its
+ * journey type, its intent, its wording, or the control it targets, and a
+ * checker that only reads one of those misses real cases. Each layer below is
+ * evaluated separately and any hit blocks.
  */
-const PAYMENT_PATTERN =
-  /\b(pay|payment|place order|complete order|complete purchase|checkout now|confirm order|buy now|billing|card ?number|expiry|cvv|cvc|iban|sort ?code)\b/i;
+
+/** Words that appear on payment controls and payment forms. */
+const PAYMENT_CONTROL_PATTERN =
+  /\b(pay|payment|paying|checkout payment|billing|bill|wallet|credit\s?card|debit\s?card|card\s?number|cvv|cvc|expiry|expiration|iban|sort\s?code|routing|account\s?number|purchase|order|buy|book|reserve)\b/i;
+
+/** Providers and processors, which name the action without saying "pay". */
+const PAYMENT_PROVIDER_PATTERN = /\b(razorpay|stripe|paypal|paypal checkout|adyen|square|klarna|checkout\.com|braintree|worldpay|skrill|instapay|upi|netbanking)\b/i;
+
+/** Journey types whose later steps are inherently transactional. */
+const PAYMENT_JOURNEY_TYPES = new Set(['checkout', 'purchase', 'ticket_purchase']);
+
+/** Intents that are payment submission steps by name. */
+const PAYMENT_INTENT_PATTERN = /(payment|place_order|complete_order|complete_purchase|confirm_order|billing|checkout_payment)/i;
+
+/** Intents that may act on a payment control, even if worded carefully. */
+const PAYMENT_TARGET_INTENT_PATTERN = /(payment|order|card|billing|checkout_payment|place_order)/i;
 
 /** What an action handler returns. */
 export interface ActionOutcome {
@@ -109,30 +123,65 @@ export class ExecutionContext {
   /**
    * True when a step looks like it would trigger a real payment.
    *
-   * Checked against the plan's own text - intent, description, expected outcome
-   * and locators - so the decision is explainable from the plan alone.
+   * Deliberately over-inclusive. The executor has no way to verify a target is
+   * a sandbox, so a step that *might* be transactional is treated as one.
    */
-  isPaymentLike(step: JourneyStep): boolean {
-    if (step.action !== 'submit' && step.action !== 'click') return false;
-    const planText = `${step.intent} ${step.description} ${step.expectedOutcome} ${step.locatorCandidates.join(' ')}`;
-    return PAYMENT_PATTERN.test(planText);
+  isPaymentLike(step: JourneyStep, elementText?: string | null): boolean {
+    if (step.action !== 'submit' && step.action !== 'click' && step.action !== 'fill') return false;
+
+    // Layer 1: the journey type, for the terminal action only. A checkout
+    // journey is transactional by nature, so its *submission* is blocked even
+    // when worded neutrally. Navigational steps inside one are not: blocking
+    // every click in a checkout journey would make the tool useless, and the
+    // safety property that matters is that no charge can be placed.
+    if (PAYMENT_JOURNEY_TYPES.has(this.plan.journeyType) && step.action === 'submit') return true;
+
+    // Layer 2: the step's own identity. A payment submission intent is
+    // unambiguous; a target intent naming a payment concept (a card field, for
+    // instance) is treated the same way, because reaching it is a step toward a
+    // charge even when the submit is never reached.
+    if (PAYMENT_INTENT_PATTERN.test(step.intent)) return true;
+    if (step.action !== 'submit' && PAYMENT_TARGET_INTENT_PATTERN.test(step.intent)) return true;
+
+    // Layer 3: the step's prose. buildLocatorCandidates are included because a
+    // generated locator embeds the control's accessible name.
+    const planText = `${step.description} ${step.expectedOutcome} ${step.locatorCandidates.join(' ')}`;
+    if (PAYMENT_CONTROL_PATTERN.test(planText) || PAYMENT_PROVIDER_PATTERN.test(planText)) return true;
+
+    // Layer 4: the control actually resolved in the browser. This catches a
+    // plan whose wording is neutral but which lands on a payment control.
+    if (elementText && (PAYMENT_CONTROL_PATTERN.test(elementText) || PAYMENT_PROVIDER_PATTERN.test(elementText))) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
-   * Refuse a payment-adjacent action unless safe test mode is declared.
+   * Refuse a payment-adjacent action.
    *
-   * The executor has no way to know whether a target is a sandbox, so the
-   * default is refusal rather than an optimistic guess.
+   * Safe test mode is the default, so this blocks by default. There is
+   * deliberately no opt-out flag: a live payment path does not exist in
+   * CrashLab, and adding one is a decision for a later build with a real
+   * sandbox-verification story.
    */
-  guardPayment(step: JourneyStep): ActionOutcome | null {
-    if (!this.isPaymentLike(step)) return null;
-    if (this.safeTestMode) return null;
+  guardPayment(step: JourneyStep, elementText?: string | null): ActionOutcome | null {
+    if (!this.isPaymentLike(step, elementText)) return null;
+    if (!this.safeTestMode) {
+      // Reachable only if a future build adds an explicit override.
+      return {
+        status: 'blocked',
+        reason: 'payment-blocked',
+        message: `Step "${step.id}" is payment-adjacent and payment execution is disabled.`,
+      };
+    }
     return {
       status: 'blocked',
       reason: 'payment-blocked',
       message:
-        `Step "${step.id}" looks like a payment or order-placement action and safe test mode is not enabled. ` +
-        'The executor will not click it, because it cannot verify the target is a sandbox.',
+        `Step "${step.id}" is payment-adjacent and was blocked by the safe-test payment guard before any browser action. ` +
+        'Safe test mode is on by default, so CrashLab does not perform real payments. ' +
+        'No payment data was read, filled, or submitted.',
     };
   }
 

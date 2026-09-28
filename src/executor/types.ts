@@ -44,9 +44,15 @@ export type BlockReason =
   | 'action-failed'
   | 'timed-out';
 
-/** What an action handler returns. Lives in types so the dispatcher and the report share it. */
+/**
+ * What an action handler returns.
+ *
+ * `skipped` is distinct from `blocked`: a step that had nothing to act on
+ * because the planner found no target is a legitimate observation, not a
+ * refusal, and must not stop the run.
+ */
 export interface ActionOutcome {
-  status: 'passed' | 'failed' | 'blocked';
+  status: 'passed' | 'failed' | 'blocked' | 'skipped';
   reason?: BlockReason;
   message?: string;
   observations?: StepObservations | null;
@@ -70,6 +76,9 @@ export interface StepObservations {
 /** Evidence captured for a single step. */
 export interface StepEvidence {
   screenshot: string | null;
+  /** True when no screenshot was taken, and `screenshotOmittedReason` says why. */
+  screenshotOmitted: boolean;
+  screenshotOmittedReason: string | null;
   /** Console messages emitted during this step. */
   consoleEvents: EvidenceConsoleEvent[];
   /** Uncaught page errors during this step. */
@@ -163,6 +172,12 @@ export interface RedactionSummary {
   dataProvidedKeys: string[];
   /** True when the test-data file was loaded at all. */
   dataProvided: boolean;
+  /**
+   * True when at least one screenshot was withheld because sensitive data had
+   * entered the page. A bitmap cannot be redacted, so CrashLab omits rather
+   * than claiming a screenshot is safe.
+   */
+  screenshotsOmittedAfterSensitiveData: boolean;
 }
 
 /** How the run was performed. */

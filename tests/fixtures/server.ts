@@ -63,6 +63,8 @@ export async function startFixtureServer(): Promise<{ server: Server; origin: st
       '/plain': 'plain.html',
       // Build 3: the page the executor drives.
       '/executor': 'executor.html',
+      // Build 3.1: the integration shop page, goal -> scout -> journey -> execute.
+      '/shop': 'shop.html',
     };
     const file = pageFile[pathname];
     if (file) {

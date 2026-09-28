@@ -32,6 +32,63 @@ const MAX_NETWORK_PER_STEP = 60;
 /** Most screenshots taken across a whole run. */
 export const MAX_SCREENSHOTS = 40;
 
+/** Why a screenshot was not taken. */
+export type ScreenshotOmissionReason = 'screenshots-disabled' | 'screenshot-limit-reached' | 'capture-failed' | 'sensitive-data-entered';
+
+/** The result of a screenshot request. */
+export interface ScreenshotResult {
+  /** Filename relative to the evidence directory, or null when omitted. */
+  path: string | null;
+  omitted: boolean;
+  omittedReason: ScreenshotOmissionReason | null;
+}
+
+/**
+ * Tracks whether sensitive data has entered the page.
+ *
+ * Once it has, screenshots stop. This is the safest available behaviour:
+ * Playwright's mask covers elements you name, but a page can echo a value
+ * anywhere - a confirmation banner, a URL, a hidden input - and a screenshot is
+ * a bitmap that JSON redaction cannot reach. Omitting is honest; masking would
+ * imply a guarantee that cannot be made.
+ */
+export class ScreenshotPolicy {
+  private entered = false;
+  private count = 0;
+  private readonly enabled: boolean;
+
+  constructor(init: { enabled: boolean } = { enabled: true }) {
+    this.enabled = init.enabled;
+  }
+
+  /** True once any test data has been filled, selected, uploaded or clicked. */
+  get sensitive(): boolean {
+    return this.entered;
+  }
+
+  /** Mark the page as carrying sensitive data from here on. */
+  markSensitive(): void {
+    this.entered = true;
+  }
+
+  /**
+   * Decide whether a screenshot may be taken, and account for it.
+   *
+   * Omission is the default once sensitive data has entered the page: an
+   * element-mask could cover a known field, but a page can echo a value into a
+   * banner, a URL or a hidden input, and no guarantee can be made about a
+   * bitmap the way one can be made about a JSON string.
+   */
+  allow(): { allowed: boolean; reason: ScreenshotOmissionReason | null } {
+    if (!this.enabled) return { allowed: false, reason: 'screenshots-disabled' };
+    if (this.entered) return { allowed: false, reason: 'sensitive-data-entered' };
+    if (this.count >= MAX_SCREENSHOTS) return { allowed: false, reason: 'screenshot-limit-reached' };
+    this.count += 1;
+    return { allowed: true, reason: null };
+  }
+}
+
+
 /** Running total of evidence, plus per-step windows. */
 export class EvidenceRecorder {
   private readonly telemetry = new TelemetryRecorder({ maxMessages: 500 });
@@ -39,7 +96,6 @@ export class EvidenceRecorder {
   private readonly scrub: Scrubber;
 
   private finalUrl: string | null = null;
-  private screenshotCount = 0;
   private dialogObserved = false;
 
   private cursorConsole = 0;
@@ -150,47 +206,52 @@ export class EvidenceRecorder {
   }
 
   /**
-   * Capture a screenshot, subject to a hard per-run cap.
+   * Capture a screenshot, subject to the policy and a hard per-run cap.
    *
-   * @returns the path relative to the evidence directory, or null when the cap
-   * was reached or the capture failed.
+   * @returns the path relative to the evidence directory, or an omission with a
+   * recorded reason. Never throws: a missing screenshot is missing evidence,
+   * not a run failure.
    */
-  async screenshot(page: Page, name: string, evidenceDir: string, enabled: boolean): Promise<string | null> {
-    if (!enabled) return null;
-    if (this.screenshotCount >= MAX_SCREENSHOTS) return null;
+  async screenshot(page: Page, name: string, evidenceDir: string, policy: ScreenshotPolicy): Promise<ScreenshotResult> {
+    const decision = policy.allow();
+    if (!decision.allowed) {
+      return { path: null, omitted: true, omittedReason: decision.reason };
+    }
 
     const absolute = join(evidenceDir, `${name}.png`);
     try {
       await mkdir(dirname(absolute), { recursive: true });
       await page.screenshot({ path: absolute, fullPage: false, animations: 'disabled' });
-      this.screenshotCount += 1;
-      return `${name}.png`;
+      return { path: `${name}.png`, omitted: false, omittedReason: null };
     } catch {
-      // A failed screenshot is a missing piece of evidence, not a run failure.
-      return null;
+      return { path: null, omitted: true, omittedReason: 'capture-failed' };
     }
   }
 
   /** Build an evidence block for one step, draining the per-step windows. */
-  stepEvidence(
+  async stepEvidence(
     page: Page,
     name: string,
     evidenceDir: string,
-    enabled: boolean,
+    policy: ScreenshotPolicy,
     urlBefore: string | null,
     urlAfter: string | null,
   ): Promise<StepEvidence> {
-    return Promise.resolve({
-      screenshot: null,
-      consoleEvents: this.takeConsole(),
-      pageErrors: this.takePageErrors(),
-      networkEvents: this.takeNetwork(),
+    const consoleEvents = this.takeConsole();
+    const pageErrors = this.takePageErrors();
+    const networkEvents = this.takeNetwork();
+    const shot = await this.screenshot(page, name, evidenceDir, policy);
+
+    return {
+      screenshot: shot.path,
+      screenshotOmitted: shot.omitted,
+      screenshotOmittedReason: shot.omittedReason,
+      consoleEvents,
+      pageErrors,
+      networkEvents,
       dialogObserved: this.sawDialog(),
       pageChanged: urlBefore !== urlAfter,
-    }).then(async (partial) => ({
-      ...partial,
-      screenshot: await this.screenshot(page, name, evidenceDir, enabled),
-    }));
+    };
   }
 }
 

@@ -46,6 +46,8 @@ export { classifyGoal } from './journey/classify.js';
 export type { ClassificationResult } from './journey/classify.js';
 export { matchRole, matchRoles, rolesForJourney, bestLocator, requiresCredentials, requiresPayment } from './journey/match.js';
 export { bestCandidate } from './journey/confidence.js';
+export { decideAction, STRONG_MATCH_SCORE, AUTH_ACTION_TEXTS, PURCHASE_ACTION_TEXTS, SUBMIT_ACTION_TEXTS } from './journey/actionability.js';
+export type { ActionDecision, IneligibilityReason } from './journey/actionability.js';
 export type { RoleMatch, RoleSpec, ScoredElement, ElementRole } from './journey/match.js';
 export { scoreConfidence, confidenceForMatch, overallConfidence, isLowConfidence } from './journey/confidence.js';
 export type { ConfidenceInput } from './journey/confidence.js';
@@ -85,6 +87,8 @@ export {
 } from './executor/locatorResolver.js';
 export type { LocatorResolution, ResolutionIntent } from './executor/locatorResolver.js';
 export { dispatchAction, supportsAction } from './executor/actionDispatcher.js';
+export { ScreenshotPolicy, MAX_SCREENSHOTS } from './executor/evidence.js';
+export type { ScreenshotResult, ScreenshotOmissionReason } from './executor/evidence.js';
 export { executeJourney, DEFAULT_STEP_TIMEOUT_MS } from './executor/executor.js';
 export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
 export { ExecutionContext } from './executor/executionContext.js';
