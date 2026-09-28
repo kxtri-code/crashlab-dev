@@ -13,6 +13,7 @@
 
 import { readFile } from 'node:fs/promises';
 import type { JourneyAction, JourneyPlan, JourneyStep, JourneyTarget, JourneyType } from '../journey/types.js';
+import { validateStructuredAssertion } from '../journey/structuredAssertion.js';
 import { JourneyPlanError, SUPPORTED_JOURNEY_SCHEMA_VERSIONS } from './types.js';
 import { toOrigin } from '../util/url.js';
 
@@ -183,6 +184,10 @@ export function validateJourneyPlan(value: unknown, path: string): JourneyPlan {
       targetElementIds: [...rawStep['targetElementIds']],
       locatorCandidates: [...rawStep['locatorCandidates']],
       expectedOutcome: typeof rawStep['expectedOutcome'] === 'string' ? rawStep['expectedOutcome'] : '',
+      // Build 6.2: optional, and validated. An assertion the validator cannot
+      // vouch for is dropped rather than carried, so the executor treats it as
+      // prose - the same safe outcome as having none at all.
+      assertion: validateStructuredAssertion(rawStep['assertion']) ?? undefined,
       confidence: typeof rawStep['confidence'] === 'number' ? rawStep['confidence'] : 0,
       executable: false,
       source: isRecord(source) && isStringArray(source['elementIds'])

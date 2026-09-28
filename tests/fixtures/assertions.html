@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Catalog - CrashLab Assertion Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Catalog</h1>
+
+      <h2>Blue Widget</h2>
+      <!--
+        The control the checkout journey clicks, and a link at the same time.
+        An anchor states its own destination, so this is both the action the
+        plan takes and the evidence a structured url-path assertion is read
+        from - the expectation is /cart, restated rather than guessed.
+      -->
+      <a id="add-to-cart" href="/cart" data-testid="add-to-cart">Add to cart</a>
+
+      <!--
+        A same-origin link with a stable, declared path, for journeys that
+        navigate rather than purchase.
+      -->
+      <a id="to-cart" href="/cart" data-testid="to-cart">View cart</a>
+
+      <!-- A destination whose path is an id, so no assertion is derived. -->
+      <a id="to-order" href="/orders/550e8400-e29b-41d4-a716-446655440000" data-testid="to-order">Order</a>
+
+      <p id="status">idle</p>
+    </main>
+  </body>
+</html>

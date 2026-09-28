@@ -18,6 +18,8 @@ import type { Locator } from 'playwright';
 import { join } from 'node:path';
 import { resolveStepTarget } from './locatorResolver.js';
 import { classifyAssertion } from './assertionClassifier.js';
+import { evaluateStructuredAssertion } from './structuredAssertionRunner.js';
+import type { AssertionOutcome } from './structuredAssertionRunner.js';
 import type { BlockReason, SkipReason, StepObservations } from './types.js';
 import { resolveFixturePath, resolveValue } from './testData.js';
 import type { ExecutionContext } from './executionContext.js';
@@ -413,6 +415,8 @@ export interface ActionOutcome {
   skipReason?: SkipReason | null;
   /** Present when the step's expectation could not be evaluated. */
   verification?: { status: 'unverified'; reason: string } | null;
+  /** Build 6.2: the outcome of a structured assertion, when one was evaluated. */
+  assertion?: AssertionOutcome | null;
   /** Extra detail recorded alongside the step, always redacted. */
   notes?: string[];
 }
@@ -426,6 +430,37 @@ export interface ActionOutcome {
  * expectation is neither a refusal nor a failure - nobody evaluated it.
  */
 const assertStep: ActionHandler = async (step, context) => {
+  // Build 6.2: a structured assertion is checked when the page allows it.
+  const structured = await evaluateStructuredAssertion(context.page, step);
+  if (structured !== null) {
+    if (structured.result === 'unevaluable') {
+      // Not checkable is not a failure. Skipped and unverified, as Build 6.1
+      // treats any expectation nobody could evaluate.
+      return {
+        status: 'skipped',
+        skipReason: 'unsupported-prose-assertion',
+        message: `Step "${step.id}" could not be evaluated: ${structured.message}`,
+        verification: { status: 'unverified', reason: structured.unevaluableReason ?? 'unevaluable-assertion' },
+      };
+    }
+    if (structured.result === 'not-matched') {
+      // Evaluated and not satisfied. That is a real result, but not a verdict.
+      return {
+        status: 'failed',
+        reason: 'action-failed',
+        message: `Step "${step.id}" assertion not satisfied: ${structured.message}`,
+        observations: null,
+        assertion: structured,
+      };
+    }
+    return {
+      status: 'passed',
+      observations: null,
+      message: `Step "${step.id}" assertion satisfied: ${structured.message}`,
+      assertion: structured,
+    };
+  }
+
   const verdict = classifyAssertion(step);
 
   if (verdict.kind === 'prose-only' || verdict.kind === 'targeted-prose') {
@@ -437,7 +472,8 @@ const assertStep: ActionHandler = async (step, context) => {
     };
   }
 
-  // A structured assertion with a real target: evaluate it as before.
+  // A structured assertion could not be built, but the step still carries a
+  // target: Build 3's deterministic presence check applies as before.
   const resolution = await resolveStepTarget(context.page, step, 'observe');
   if (!resolution.ok) {
     return {

@@ -36,6 +36,7 @@ export function execStep(overrides: Partial<StepExecutionResult> & { id: string;
     error: null,
     skipReason: null,
     verification: null,
+    assertion: null,
     description: '',
     planConfidence: 0.7,
     ...overrides,

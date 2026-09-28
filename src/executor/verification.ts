@@ -44,6 +44,9 @@ export function buildVerification(
   // An unverified assertion is a skipped step that says so explicitly. A step
   // skipped for another reason - no target, or an earlier failure - is a
   // different thing and is not counted here.
+  //
+  // A *failed* structured assertion is a real result and must keep the run out
+  // of `complete`: the expectation was checked and did not hold.
   const unverified = steps.filter((step) => step.verification?.status === 'unverified');
   const unverifiedStepIds = unverified.map((step) => step.id).sort();
 

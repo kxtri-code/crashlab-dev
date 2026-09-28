@@ -36,6 +36,9 @@ function fixtureResponse(pathname: string): { status: number; type: string; body
   if (pathname === '/submitted') {
     return { status: 200, type: 'text/html; charset=utf-8', body: '<!doctype html><title>Submitted</title><h1>Submitted</h1>' };
   }
+  if (pathname === '/catalog') {
+    return { status: 200, type: 'text/html; charset=utf-8', body: 'catalog placeholder' };
+  }
   return { status: 404, type: 'text/plain; charset=utf-8', body: 'fixture route not found' };
 }
 
@@ -65,6 +68,9 @@ export async function startFixtureServer(): Promise<{ server: Server; origin: st
       '/executor': 'executor.html',
       // Build 3.1: the integration shop page, goal -> scout -> journey -> execute.
       '/shop': 'shop.html',
+      // Build 6.2: pages whose links give the planner a structured assertion.
+      '/catalog': 'assertions.html',
+      '/cart': 'cart.html',
     };
     const file = pageFile[pathname];
     if (file) {

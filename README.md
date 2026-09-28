@@ -1372,6 +1372,7 @@ src/
     classify.ts       PURE: goal -> journey type, with ambiguity reporting
     match.ts          PURE: Scout elements -> scored role candidates
     actionability.ts  PURE (3.1): is a match specific enough to act on?
+    structuredAssertion.ts PURE (6.2): assertion types, validation, generation
     confidence.ts     PURE: evidence -> 0..1 confidence
     plan.ts           PURE: composition into ordered steps + diagnostics
     report.ts         plan persistence + terminal summary
@@ -1380,6 +1381,9 @@ src/
     planValidator.ts       PURE: plan loading and contract validation
     testData.ts            PURE: test-data resolution and fixture-path limits
     redaction.ts           PURE: scrubbing and redacted value summaries
+    assertionClassifier.ts PURE: structured vs prose-only vs targeted-prose
+    structuredAssertionRunner.ts  evaluates a structured assertion (6.2)
+    verification.ts        PURE: the completion model and verification record
     locatorResolver.ts     plan locator strings -> Playwright locators
     executionContext.ts    per-step budget, origin and payment guards
     actionDispatcher.ts    the nine actions
@@ -1730,3 +1734,107 @@ attached to a step whose expectation was never evaluated is classified `unknown`
 
 An unverified assertion is not a confirmed bug, and a partial baseline is not a
 fully verified one.
+
+---
+
+## Build 6.2: Structured Assertions
+
+Build 6.1 made an unevaluable expectation honest. Build 6.2 makes it *checkable* —
+but only where Scout already observed the evidence.
+
+### What a structured assertion is
+
+An optional `assertion` field on a journey step, holding an expectation a browser can
+actually check:
+
+```jsonc
+{
+  "action": "assert",
+  "expectedOutcome": "The declared destination is reached: the path is /cart.",
+  "assertion": {
+    "type": "url-path",
+    "expectedPath": "/cart",
+    "match": "exact",
+    "source": { "kind": "scout-href", "elementId": "element-001", "field": "href" }
+  }
+}
+```
+
+Every assertion names its `source` — the Scout element or field it was read from. An
+assertion that cannot name its evidence is dropped rather than carried, so the
+executor treats it as prose. That is the same safe outcome as having none.
+
+### Supported types
+
+| Type | Checks | Example source |
+| --- | --- | --- |
+| `url-path` | The page path matches | a link's `href` |
+| `url-origin` | The page origin matches | a link's `href` |
+| `element-present` | The target exists | a Scout element |
+| `element-visible` | The target is visible | a Scout element |
+| `element-enabled` | The target is enabled | a Scout element |
+| `text-contains` | The target's text contains a string | Scout-visible text |
+
+### The planner's conservatism
+
+**A structured assertion may only restate what Scout observed.** Nothing is inferred
+from the goal's wording, and no expected value is ever invented. Concretely, the
+planner declines when:
+
+- the clicked control is a bare button, which declares no destination
+- the destination's path contains a generated id — `/orders/550e8400-e29b-…` is
+  data-dependent, so asserting on it would fail spuriously or pass for the wrong reason
+- the expected text would be secret-bearing, overlong, or not directly observed
+- the target is a hidden or secret-bearing control, or is ambiguous
+- the journey is payment-adjacent and the control is a form submission
+
+So a login journey, whose form declares no postcondition, keeps its prose
+expectation and stays partially verified. That is the correct answer: **a confident
+assertion that cannot fail is worse than an honest one that was not made.**
+
+### Prose remains the fallback
+
+The prose path is unchanged and still first-class:
+
+```jsonc
+{
+  "action": "assert",
+  "expectedOutcome": "The expected post-login state is not represented in the Scout report and must be observed at execution time."
+}
+```
+
+Existing `journey-plan-v1` documents without an `assertion` field are valid and
+execute exactly as they did in Build 6.1: skipped, unverified, partial verification.
+`schemaVersion` is unchanged — an optional field is not a breaking contract change.
+
+### Executor behaviour
+
+| Case | Result |
+| --- | --- |
+| Valid assertion, expectation met | `passed`, with `assertion.result: "matched"` |
+| Valid assertion, expectation not met | `failed`, with `assertion.result: "not-matched"` |
+| Unevaluable or unsupported | `skipped` and unverified — never a failure |
+| No assertion (legacy or declined) | Build 6.1's prose behaviour, unchanged |
+
+**A failed assertion is not a confirmed bug.** It means the expectation did not hold
+this time. Whether that is a defect, a timing artefact, or a changed page is not
+decided here.
+
+### Verification impact
+
+A journey whose assertions are all evaluated reaches `complete` / `full-plan` and is
+eligible for a **normal** baseline. One that keeps a prose expectation still reaches
+`partial` / `executed-steps-only` and needs `--allow-unverified-assertions`, exactly
+as in Build 6.1. The planner cannot claim full-plan verification by merely *adding*
+an assertion object — only the executor's evaluation can.
+
+### Redaction
+
+An assertion result records the type, the match outcome, and for URL assertions the
+actual origin or path. It never records a password, token, cookie, payment value,
+form value, secret URL, or full sensitive page text. Text assertions report *whether*
+the expected string was found, never the page's own text — a page can echo back a
+value the executor typed moments earlier.
+
+Build 6.2 adds no AI. The planner remains a pure, deterministic function of the goal
+and the Scout report, with no Playwright import and no model call.

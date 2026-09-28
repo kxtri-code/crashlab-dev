@@ -86,6 +86,7 @@ async function safeAsync<T>(fn: () => Promise<T>): Promise<T | null> {
     },
     skipReason: reason === 'execution stopped after an earlier failure' ? 'stopped-after-failure' : 'skipped-step',
     verification: null,
+    assertion: null,
     description: step.description,
     planConfidence: step.confidence,
   };
@@ -241,6 +242,8 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
         // Present only when an expectation could not be evaluated. Absent means
         // the step either succeeded or genuinely had nothing to do.
         verification: outcome.status === 'skipped' ? (outcome.verification ?? null) : null,
+        // Build 6.2: the structured assertion's outcome, when one was evaluated.
+        assertion: outcome.assertion ?? null,
         description: step.description,
         planConfidence: step.confidence,
       });

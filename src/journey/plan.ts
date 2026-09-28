@@ -21,12 +21,14 @@ import type {
   JourneyPlannerInput,
   JourneyStep,
   JourneyType,
+  StructuredAssertion,
 } from './types.js';
 import { JOURNEY_SCHEMA_VERSION, confidenceBand } from './types.js';
 import { normalizeGoal, tokenize } from './goal.js';
 import { classifyGoal } from './classify.js';
 import { bestCandidate, confidenceForMatch, isLowConfidence, overallConfidence } from './confidence.js';
 import { matchRoles, requiresCredentials, requiresPayment, rolesForJourney } from './match.js';
+import { generatePostActionAssertion } from './structuredAssertion.js';
 import {
   AUTH_ACTION_TEXTS,
   PURCHASE_ACTION_TEXTS,
@@ -540,17 +542,84 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
   }
 }
 
+/** A step template plus whatever the plan needs to build its final assertion. */
+interface StepBuildOptions {
+  scoutPath: string;
+  /** The Scout report, read only to derive a machine-readable expectation. */
+  scout: ScoutReport;
+  /** The journey type, so the generator can apply type-specific rules. */
+  journeyType: JourneyType;
+}
+
+/**
+ * Derive a machine-readable expectation for the terminal assertion step.
+ *
+ * Returns `null` for every journey type Build 2 cannot derive an observable
+ * postcondition for - which today means all of them, unless the journey's own
+ * click target is a same-origin link or form action. In that one case the
+ * expectation is the destination the control *already declares*, restated, not
+ * an inference about where the page should lead.
+ */
+function deriveFinalAssertion(
+  options: StepBuildOptions,
+  steps: readonly JourneyStep[],
+): { assertion: StructuredAssertion; rationale: string } | null {
+  // Payment-adjacent journeys get no derived expectation. "Buy" on a
+  // checkout page may lead to a charge, and asserting *that* succeeded is
+  // exactly the confident, unevidenced claim this refuses to make. A declared
+  // cart destination is still safe: it says where the control goes, not that
+  // anything was paid for.
+  const isPaymentJourney =
+    options.journeyType === 'checkout' || options.journeyType === 'purchase' || options.journeyType === 'ticket_purchase';
+
+  // The expectation must describe where the journey *actually ends up*. So the
+  // source has to be a control the plan navigates with - a link, or a form
+  // whose action is a real destination. A link the plan merely observes while
+  // clicking something else describes a journey the plan is not taking, and
+  // asserting it would fail on every correct run.
+  const navigable = new Set<string>();
+  for (const step of steps) {
+    if (step.action !== 'click' && step.action !== 'submit') continue;
+    if (step.action === 'submit' && isPaymentJourney) continue;
+    for (const id of step.targetElementIds) navigable.add(id);
+  }
+
+  const linkIds = new Set(
+    options.scout.interactiveElements
+      .filter((element) => element.type === 'link' && typeof element.href === 'string')
+      .map((element) => `element-${String(element.index + 1).padStart(3, '0')}`),
+  );
+
+  for (const step of [...steps].reverse()) {
+    for (const id of step.targetElementIds) {
+      if (!navigable.has(id) || !linkIds.has(id)) continue;
+      const element = options.scout.interactiveElements.find(
+        (candidate) => `element-${String(candidate.index + 1).padStart(3, '0')}` === id,
+      );
+      const href = element?.href;
+      if (typeof href !== 'string' || href.trim() === '') continue;
+
+      const generation = generatePostActionAssertion(options.scout, { href, elementId: id, field: 'href' });
+      if (generation.kind === 'generated') {
+        return { assertion: generation.candidate.assertion, rationale: generation.candidate.rationale };
+      }
+    }
+  }
+
+  return null;
+}
+
 /** Build the ordered, `executable: false` steps for a journey. */
 function buildSteps(
   journeyType: JourneyType,
   templates: readonly StepTemplate[],
   matches: Map<ElementRole, RoleMatch>,
   scoutPath: string,
-): { steps: JourneyStep[]; inertReasons: { intent: string; reason: string; detail: string }[] } {
+  scout: ScoutReport,
+): { steps: JourneyStep[]; inertReasons: { intent: string; reason: string; detail: string }[]; assertionRationale: string | null } {
   const inertReasons: { intent: string; reason: string; detail: string }[] = [];
 
-  const steps = templates.map((template, position) => {
-    const match = template.role ? (matches.get(template.role) ?? null) : null;
+  const steps: JourneyStep[] = templates.map((template, position): JourneyStep => {    const match = template.role ? (matches.get(template.role) ?? null) : null;
     const best = match ? bestCandidate(match) : null;
 
     // Decide whether this step can carry a real action. A template without an
@@ -598,6 +667,8 @@ function buildSteps(
       targetElementIds,
       locatorCandidates,
       expectedOutcome,
+      // Build 6.2: a machine-readable expectation is attached below, once the
+      // whole plan exists. Its absence means the prose fallback stands.
       confidence: Math.round(confidence * 100) / 100,
       // Build 2 never executes. Build 3 may transform these descriptions.
       executable: false,
@@ -605,10 +676,41 @@ function buildSteps(
         report: scoutPath,
         elementIds: targetElementIds,
       },
-    } satisfies JourneyStep;
+    };
   });
 
-  return { steps, inertReasons };
+  // The expectation is derived once the whole plan exists, because it depends on
+  // the control the plan is actually going to act on.
+  const derived = deriveFinalAssertion({ scoutPath, scout, journeyType }, steps);
+  const assertionStepIndex = steps.findIndex((step) => step.action === 'assert');
+  if (derived !== null && assertionStepIndex >= 0) {
+    const target = steps[assertionStepIndex];
+    if (target) {
+      steps[assertionStepIndex] = {
+        ...target,
+        assertion: derived.assertion,
+        expectedOutcome: `The declared destination is reached: ${describeAssertion(derived.assertion)}.`,
+        confidence: Math.max(target.confidence, 0.7),
+        source: { report: scoutPath, elementIds: [derived.assertion.source.elementId ?? ''].filter(Boolean) },
+      };
+    }
+  }
+
+  return { steps, inertReasons, assertionRationale: derived?.rationale ?? null };
+}
+
+/** A short, factual description of an assertion, for prose that accompanies it. */
+function describeAssertion(assertion: StructuredAssertion): string {
+  switch (assertion.type) {
+    case 'url-path':
+      return `the path is ${assertion.expectedPath}`;
+    case 'url-origin':
+      return `the origin is ${assertion.expectedOrigin}`;
+    case 'text-contains':
+      return `the page contains "${assertion.expectedText}"`;
+    default:
+      return `the ${assertion.type.replace('-', ' ')} target is present`;
+  }
 }
 
 /** Deterministic, local, heuristic planner - the Build 2 default. */
@@ -624,7 +726,13 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
     const roles: readonly RoleSpec[] = rolesForJourney(journeyType);
     const matches = matchRoles(elements, roles, goalTokens);
 
-    const { steps, inertReasons } = buildSteps(journeyType, templatesFor(journeyType), matches, input.scoutPath);
+    const { steps, inertReasons, assertionRationale } = buildSteps(
+      journeyType,
+      templatesFor(journeyType),
+      matches,
+      input.scoutPath,
+      input.scout,
+    );
 
     const { warnings, missingInformation, assumptions } = deriveDiagnostics({
       journeyType,
@@ -635,6 +743,7 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
       elements,
       normalizedGoal,
       inertReasons,
+      assertionRationale,
     });
 
     return {
@@ -670,6 +779,8 @@ interface DiagnosticInput {
   normalizedGoal: string;
   /** Why a matched step stayed observational instead of becoming an action. */
   inertReasons: readonly { intent: string; reason: string; detail: string }[];
+  /** Why a structured assertion was generated, when one was. */
+  assertionRationale: string | null;
 }
 
 /** Deduplicate while preserving first-seen order, for stable serialisation. */
@@ -688,7 +799,7 @@ function deriveDiagnostics(input: DiagnosticInput): {
   warnings: string[];
   missingInformation: string[];
 } {
-  const { journeyType, classification, matches, roles, steps, elements, inertReasons } = input;
+  const { journeyType, classification, matches, roles, steps, elements, inertReasons, assertionRationale } = input;
   const assumptions: string[] = [];
   const warnings: string[] = [];
   const missingInformation: string[] = [];
@@ -799,6 +910,10 @@ function deriveDiagnostics(input: DiagnosticInput): {
   }
   assumptions.push('Element visibility and enabled state are taken from the Scout report as captured, not re-verified.');
   assumptions.push('Step actions are descriptive only; Build 2 does not execute any step.');
+
+  if (assertionRationale !== null) {
+    assumptions.push(`Structured assertion derived from Scout evidence: ${assertionRationale}`);
+  }
 
   return {
     assumptions: dedupe(assumptions),

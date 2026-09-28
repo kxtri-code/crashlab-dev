@@ -51,6 +51,83 @@ export interface JourneyStepSource {
   elementIds: string[];
 }
 
+/**
+ * Where a machine-readable expectation came from.
+ *
+ * Required on every structured assertion: a plan that cannot name its evidence
+ * cannot be audited, and an untraceable assertion is indistinguishable from an
+ * invented one.
+ */
+export interface AssertionSource {
+  /** Where in the Scout report the expectation was read from. */
+  kind:
+    | 'scout-element'
+    | 'scout-visible-text'
+    | 'scout-href'
+    | 'scout-form-action'
+    | 'scout-target-url';
+  /** The Scout element the expectation was read from, when it came from one. */
+  elementId?: string;
+  /** The Scout field the expectation was read from. */
+  field?: 'href' | 'action' | 'text' | 'label' | 'value' | 'url';
+}
+
+/** Shared fields on every structured assertion. */
+interface AssertionBase {
+  /** Where the expectation was read from in the Scout report. */
+  source: AssertionSource;
+  /** How the expectation is compared. `exact` unless the type is inherently a substring match. */
+  match?: 'exact' | 'substring' | 'prefix';
+}
+
+/** The target element exists in the DOM. */
+export interface ElementPresentAssertion extends AssertionBase {
+  type: 'element-present';
+}
+
+/** The target element exists and is visible. */
+export interface ElementVisibleAssertion extends AssertionBase {
+  type: 'element-visible';
+}
+
+/** The target element exists and is enabled. */
+export interface ElementEnabledAssertion extends AssertionBase {
+  type: 'element-enabled';
+}
+
+/** The target element's visible text contains an expected string. */
+export interface TextContainsAssertion extends AssertionBase {
+  type: 'text-contains';
+  /** Observed in the Scout report; never invented. */
+  expectedText: string;
+  match: 'substring' | 'exact';
+}
+
+/** The page origin matches an expected origin. */
+export interface UrlOriginAssertion extends AssertionBase {
+  type: 'url-origin';
+  /** Protocol, host and port. Never a path, query or fragment. */
+  expectedOrigin: string;
+  match: 'exact';
+}
+
+/** The page path matches an expected path. */
+export interface UrlPathAssertion extends AssertionBase {
+  type: 'url-path';
+  /** Path only, with no query, fragment or trailing slash. */
+  expectedPath: string;
+  match: 'exact' | 'prefix';
+}
+
+/** Every assertion the executor knows how to evaluate. */
+export type StructuredAssertion =
+  | ElementPresentAssertion
+  | ElementVisibleAssertion
+  | ElementEnabledAssertion
+  | TextContainsAssertion
+  | UrlOriginAssertion
+  | UrlPathAssertion;
+
 /** One planned step. Never executed by Build 2. */
 export interface JourneyStep {
   /** Deterministic id: `step-001`, `step-002`, ... */
@@ -67,6 +144,12 @@ export interface JourneyStep {
   /** Deduplicated candidate locators, in stable order. */
   locatorCandidates: string[];
   expectedOutcome: string;
+  /**
+   * Build 6.2: a machine-readable expectation, present only when Scout
+   * evidence supported one. Its absence is the normal case and means the step
+   * keeps a prose `expectedOutcome`, which the executor records as unverified.
+   */
+  assertion?: StructuredAssertion;
   /** 0..1, from observable Scout evidence only. */
   confidence: number;
   /** Always `false` in Build 2. */

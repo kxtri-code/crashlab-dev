@@ -48,6 +48,19 @@ export { matchRole, matchRoles, rolesForJourney, bestLocator, requiresCredential
 export { bestCandidate } from './journey/confidence.js';
 export { decideAction, STRONG_MATCH_SCORE, AUTH_ACTION_TEXTS, PURCHASE_ACTION_TEXTS, SUBMIT_ACTION_TEXTS } from './journey/actionability.js';
 export type { ActionDecision, IneligibilityReason } from './journey/actionability.js';
+export {
+  ASSERTION_TYPES,
+  generatePostActionAssertion,
+  generateTargetElementAssertion,
+  generateVisibleTextAssertion,
+  isSafeExpectedText,
+  isStablePath,
+  normalizeOrigin,
+  normalizePath,
+  normalizeText,
+  validateStructuredAssertion,
+} from './journey/structuredAssertion.js';
+export type { AssertionGeneration, AssertionCandidate, AssertionType } from './journey/structuredAssertion.js';
 export type { RoleMatch, RoleSpec, ScoredElement, ElementRole } from './journey/match.js';
 export { scoreConfidence, confidenceForMatch, overallConfidence, isLowConfidence } from './journey/confidence.js';
 export type { ConfidenceInput } from './journey/confidence.js';
@@ -64,6 +77,14 @@ export type {
   JourneyPlanner,
   JourneyPlannerInput,
   JourneyPlannerMeta,
+  StructuredAssertion,
+  AssertionSource,
+  ElementPresentAssertion,
+  ElementVisibleAssertion,
+  ElementEnabledAssertion,
+  TextContainsAssertion,
+  UrlOriginAssertion,
+  UrlPathAssertion,
 } from './journey/types.js';
 
 export * from './scout/types.js';
@@ -92,6 +113,8 @@ export type { ScreenshotResult, ScreenshotOmissionReason } from './executor/evid
 export { executeJourney, DEFAULT_STEP_TIMEOUT_MS } from './executor/executor.js';
 export { classifyAssertion, isUnverifiableAssertion, skipReasonFor } from './executor/assertionClassifier.js';
 export type { AssertionVerdict } from './executor/assertionClassifier.js';
+export { evaluateStructuredAssertion } from './executor/structuredAssertionRunner.js';
+export type { AssertionOutcome, AssertionResultKind } from './executor/structuredAssertionRunner.js';
 export { buildVerification, deriveExecutionStatus, isFullyVerified } from './executor/verification.js';
 export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
 export { ExecutionContext } from './executor/executionContext.js';

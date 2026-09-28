@@ -231,6 +231,12 @@ export interface StepExecutionResult {
    * assertion is neither passed nor failed: nobody checked it.
    */
   verification: StepVerification | null;
+  /**
+   * Build 6.2: the outcome of a structured assertion. Null when the step had
+   * none, or when it was never evaluated. A `not-matched` result is a real
+   * observation, never a defect verdict.
+   */
+  assertion: import('./structuredAssertionRunner.js').AssertionOutcome | null;
   /** Step description, echoed from the immutable plan. */
   description: string;
   /** Step confidence, echoed from the immutable plan. Not a pass/fail signal. */
