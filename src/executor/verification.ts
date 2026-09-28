@@ -1,0 +1,116 @@
+/**
+ * Run verification.
+ *
+ * The question this answers is not "did everything pass?" but "how much of the
+ * plan did we actually evaluate?"
+ *
+ * That distinction exists because a generated journey routinely ends with a
+ * prose assertion nobody can evaluate. Treating that as a failure would report
+ * a healthy run as broken; treating it as a pass would claim a conclusion the
+ * evidence does not support. So the run *completes*, and its verification is
+ * `partial`.
+ *
+ * Pure, so the whole completion model is testable without a browser.
+ */
+
+import type {
+  ExecutionStatus,
+  ExecutionVerification,
+  StepExecutionResult,
+  StepStatus,
+  VerificationCoverage,
+  VerificationStatus,
+} from './types.js';
+
+/** Count steps by status, including steps that never ran. */
+function tally(steps: readonly StepExecutionResult[]): Record<StepStatus, number> {
+  const counts: Record<StepStatus, number> = { passed: 0, failed: 0, blocked: 0, skipped: 0 };
+  for (const step of steps) {
+    if (step.status in counts) counts[step.status] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Build the verification record for a finished run.
+ *
+ * @param aborted whether execution stopped before the plan was processed.
+ */
+export function buildVerification(
+  steps: readonly StepExecutionResult[],
+  aborted: boolean,
+): ExecutionVerification {
+  const counts = tally(steps);
+  // An unverified assertion is a skipped step that says so explicitly. A step
+  // skipped for another reason - no target, or an earlier failure - is a
+  // different thing and is not counted here.
+  const unverified = steps.filter((step) => step.verification?.status === 'unverified');
+  const unverifiedStepIds = unverified.map((step) => step.id).sort();
+
+  // Steps that ran, as opposed to those never reached.
+  const executedSteps = counts.passed + counts.failed + counts.blocked;
+
+  let status: VerificationStatus;
+  let coverage: VerificationCoverage;
+
+  if (aborted || counts.failed > 0 || counts.blocked > 0) {
+    // An interrupted, failed or refused run cannot claim it evaluated the plan.
+    status = 'incomplete';
+    coverage = executedSteps === 0 ? 'partial-plan' : 'partial-plan';
+  } else if (unverified.length > 0) {
+    // The important case: everything executable succeeded, but an expectation
+    // was left unchecked. Completion, not success.
+    status = 'partial';
+    coverage = 'executed-steps-only';
+  } else if (counts.skipped > 0) {
+    // Skipped for a benign reason (an observation with no target). Nothing is
+    // unverified, so the executable plan was fully evaluated.
+    status = 'complete';
+    coverage = 'executed-steps-only';
+  } else {
+    status = 'complete';
+    coverage = 'full-plan';
+  }
+
+  return {
+    status,
+    complete: status === 'complete',
+    executedSteps,
+    passedSteps: counts.passed,
+    failedSteps: counts.failed,
+    blockedSteps: counts.blocked,
+    skippedSteps: counts.skipped,
+    unverifiedAssertions: unverified.length,
+    unverifiedStepIds,
+    coverage,
+  };
+}
+
+/**
+ * Derive the top-level status.
+ *
+ * `completed` and `passed` are separate on purpose: a run that finished while
+ * leaving an expectation unverified is not a run where everything passed.
+ */
+export function deriveExecutionStatus(
+  steps: readonly StepExecutionResult[],
+  aborted: boolean,
+): ExecutionStatus {
+  const counts = tally(steps);
+
+  // A real interruption outranks everything: the run did not finish.
+  if (aborted) return 'aborted';
+  if (counts.failed > 0) return 'failed';
+  if (counts.blocked > 0) return 'blocked';
+
+  const unverified = steps.filter((step) => step.verification?.status === 'unverified');
+  if (unverified.length > 0) return 'completed';
+  if (counts.passed > 0) return 'passed';
+  // Nothing ran and nothing failed: every step was a no-op.
+  return 'skipped';
+}
+
+/** Whether a run may be treated as fully verified. */
+export function isFullyVerified(verification: ExecutionVerification | null): boolean {
+  return verification !== null && verification.status === 'complete' && verification.complete;
+}

@@ -101,6 +101,19 @@ export interface CandidateSummary {
   reproducedSignals: number;
 }
 
+/**
+ * How far the baseline's own creation run was verified.
+ *
+ * A `known-good-partial` baseline reached only its executed steps, so a
+ * comparison against it cannot support a full-plan claim. Recorded so a reader
+ * knows the limit of what "novel" means here.
+ */
+export interface BaselineVerificationSummary {
+  status: 'complete' | 'partial' | 'unavailable';
+  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+  unverifiedAssertions: number;
+}
+
 /** The report written to `reports/candidates.json`. */
 export interface CandidateReport {
   schemaVersion: string;
@@ -121,6 +134,15 @@ export interface CandidateReport {
     /** Why comparison was impossible, when unknown. */
     reason: string | null;
   };
+  /**
+   * How far the baseline was verified. Null when no baseline was supplied.
+   */
+  baselineVerification: BaselineVerificationSummary | null;
+  /**
+   * Stated limits on what this comparison can claim. A partial baseline makes
+   * every verdict here narrower, and saying so is the point.
+   */
+  comparisonLimitations: string[];
   summary: CandidateSummary;
   candidates: Candidate[];
   interpretation: {

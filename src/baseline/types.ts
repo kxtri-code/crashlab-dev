@@ -21,8 +21,30 @@
 /** Baseline schema version. */
 export const BASELINE_SCHEMA_VERSION = '1.0';
 
-/** A baseline is always a known-good claim, never a defect claim. */
-export type BaselineStatus = 'known-good';
+/**
+ * A baseline is always a known-good claim, never a defect claim.
+ *
+ * `known-good-partial` exists for a real case Build 6.1 found: a generated
+ * journey routinely ends with a prose assertion nobody can evaluate, so a run
+ * can be entirely healthy and still be only partially verified. Recording such
+ * a run as fully verified would claim an expectation was proven; refusing it
+ * would mean no generated journey could ever become a baseline.
+ */
+export type BaselineStatus = 'known-good' | 'known-good-partial';
+
+/**
+ * What was actually verified when the baseline was created.
+ *
+ * Recorded on the baseline so a later review knows the comparison's reach. A
+ * `known-good-partial` baseline cannot support a full-plan claim.
+ */
+export interface BaselineVerification {
+  complete: boolean;
+  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+  unverifiedAssertions: number;
+  /** True only when the operator passed --allow-unverified-assertions. */
+  operatorApproved: boolean;
+}
 
 /** Where the baseline's inputs came from. References, never inlined reports. */
 export interface BaselineSource {
@@ -114,9 +136,13 @@ export interface Baseline {
   identity: BaselineIdentity;
   knownSignals: BaselineSignal[];
   safety: BaselineSafety;
+  /**
+   * How far the creating run was verified. A `known-good-partial` baseline
+   * reaches only its executed steps.
+   */
+  verification: BaselineVerification;
   /** Why this baseline was considered known-good, and what it does not claim. */
-  rationale: string;
-  interpretation: {
+  rationale: string;  interpretation: {
     confirmedBug: false;
     automaticSeverity: false;
     note: string;

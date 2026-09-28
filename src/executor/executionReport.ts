@@ -20,7 +20,8 @@ import type {
   StepExecutionResult,
 } from './types.js';
 import { EXECUTION_SCHEMA_VERSION } from './types.js';
-import type { EnvironmentProvenance } from '../provenance/types.js';
+import type { ExecutionVerification } from './types.js';
+import type { EnvironmentProvenance } from '../provenance/types.js';import { buildVerification, deriveExecutionStatus } from './verification.js';
 import { TOOL_VERSION } from '../version.js';
 
 /** Tally per-step statuses. */
@@ -36,21 +37,12 @@ export function countSteps(steps: readonly StepExecutionResult[]): ExecutionRepo
 }
 
 /**
- * Derive the overall run status from the step results.
+ * Derive the overall run status.
  *
- * A run that stopped early is `aborted` even when nothing passed: the useful
- * fact is that execution was cut short, not that the journey was judged a
- * failure. `aborted` is checked first so a block at step 1 of 2 does not read
- * as a completed-but-failed run. Never "bug", whatever the outcome.
+ * Re-exported from `verification.ts` so there is exactly one status model in
+ * the codebase. `deriveStatus` is kept as the name Builds 3 and 4 already use.
  */
-export function deriveStatus(steps: readonly StepExecutionResult[], aborted: boolean): ExecutionStatus {
-  if (steps.length === 0) return 'passed';
-  if (aborted) return 'aborted';
-  const counts = countSteps(steps);
-  if (counts.failed > 0) return 'failed';
-  if (counts.blocked > 0) return counts.passed === 0 ? 'failed' : 'partial';
-  return 'passed';
-}
+export { deriveExecutionStatus as deriveStatus } from './verification.js';
 
 /** Assemble the report. Pure. */
 export function buildExecutionReport(input: {
@@ -72,6 +64,13 @@ export function buildExecutionReport(input: {
   aborted: boolean;
   stoppedOnFailure: boolean;
   warnings: string[];
+  /**
+   * Build 6.1 completion. Optional so a caller can supply a precomputed record
+   * or let it be derived from the steps; the derived value is always consistent
+   * with them.
+   */
+  status?: import('./types.js').ExecutionStatus;
+  verification?: ExecutionVerification | null;
 }): ExecutionReport {
   const blockedSteps = input.steps
     .filter((step) => step.status === 'blocked')
@@ -88,9 +87,9 @@ export function buildExecutionReport(input: {
       finalUrl: input.finalUrl,
       title: input.plan.target.title,
     },
-    status: deriveStatus(input.steps, input.aborted),
-    startedAt: input.startedAt,
-    finishedAt: input.finishedAt,
+    status: input.status ?? deriveExecutionStatus(input.steps, input.aborted),
+    verification: input.verification ?? buildVerification(input.steps, input.aborted),
+    startedAt: input.startedAt,    finishedAt: input.finishedAt,
     durationMs: input.durationMs,
     stepCounts: countSteps(input.steps),
     steps: input.steps,
@@ -139,6 +138,13 @@ export function summarizeExecution(report: ExecutionReport): string {
   lines.push(row('Final URL:', report.target.finalUrl ?? '(none)'));
   lines.push(row('Plan:', report.journeyReport));
   lines.push(row('Overall:', report.status.toUpperCase()));
+  if (report.verification) {
+    // Completion and full verification are different claims, so both are shown.
+    lines.push(row('Verified:', `${report.verification.status} (${report.verification.coverage})`));
+    if (report.verification.unverifiedAssertions > 0) {
+      lines.push(row('Unverified:', `${report.verification.unverifiedAssertions} expectation(s) not evaluated`));
+    }
+  }
   lines.push('');
 
   lines.push('STEPS');
@@ -177,6 +183,12 @@ export function summarizeExecution(report: ExecutionReport): string {
 
   lines.push(`Execution finished: ${report.status}. Retries: ${report.executor.retries}.`);
   lines.push(`Safe test mode: ${report.executor.safeTestMode ? 'on (payment actions blocked)' : 'off'}.`);
+  if (report.verification && !report.verification.complete) {
+    lines.push(
+      'Some expectations were left unverified. Completion means the run finished safely; ' +
+        'it does not mean every expected outcome was proven.',
+    );
+  }
   lines.push('A failed or blocked step is an observation about this run, not a confirmed bug.');
   lines.push('Anomaly detection belongs to Build 4; reproduction belongs to Build 5.');
 

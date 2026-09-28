@@ -56,9 +56,40 @@ export function buildCandidateReport(input: ReviewInput): CandidateReport {
     reproduction: input.reproduction,
     baseline: input.baseline,
     compatibility,
+    // Read from the execution report rather than inferred, so a legacy report
+    // simply yields none.
+    unverifiedStepIds: input.execution.verification?.unverifiedStepIds ?? [],
   });
 
   const candidates = toCandidates(verdicts, compatibility.classification);
+
+  // Build 6.1: a partially verified baseline narrows every verdict below. The
+  // limit is stated rather than absorbed, so "novel" is never read as
+  // "novel across the whole plan" when the baseline never saw the whole plan.
+  const baselineVerification: CandidateReport['baselineVerification'] =
+    input.baseline === null
+      ? null
+      : {
+          status: input.baseline.verification?.complete ? 'complete' : input.baseline.verification ? 'partial' : 'unavailable',
+          coverage: input.baseline.verification?.coverage ?? 'unavailable',
+          unverifiedAssertions: input.baseline.verification?.unverifiedAssertions ?? 0,
+        };
+
+  const comparisonLimitations: string[] = [];
+  if (baselineVerification !== null && !baselineVerification.status.includes('complete')) {
+    comparisonLimitations.push(
+      `The baseline was only partially verified (${baselineVerification.unverifiedAssertions} unverified expectation(s)).`,
+    );
+    comparisonLimitations.push('Comparison covers executed steps only, not the full journey plan.');
+  }
+  if (input.execution.verification !== null && !input.execution.verification.complete) {
+    comparisonLimitations.push(
+      `The current run left ${input.execution.verification.unverifiedAssertions} expectation(s) unverified.`,
+    );
+  }
+  if (comparisonLimitations.length === 0) {
+    comparisonLimitations.push('None: both the baseline and the current run were fully verified.');
+  }
 
   const report: CandidateReport = {
     schemaVersion: REVIEW_SCHEMA_VERSION,
@@ -82,6 +113,8 @@ export function buildCandidateReport(input: ReviewInput): CandidateReport {
       differences: compatibility.differences,
       reason: compatibility.reason,
     },
+    baselineVerification,
+    comparisonLimitations,
     summary: {
       totalSignals: 0,
       novel: 0,
@@ -136,6 +169,9 @@ export function summarizeCandidateReport(report: CandidateReport): string {
   lines.push(row('Baseline:', report.baseline?.baselineId ?? '(none supplied)'));
   lines.push(row('Comparison:', comparison.classification));
   lines.push(row('Target origin:', comparison.targetOrigin ?? '(unknown)'));
+  lines.push(
+    row('Baseline verified:', report.baselineVerification === null ? '(no baseline)' : report.baselineVerification.coverage),
+  );
   lines.push('');
 
   lines.push('SIGNALS');
@@ -160,6 +196,12 @@ export function summarizeCandidateReport(report: CandidateReport): string {
     lines.push(`  ${comparison.reason}`);
     lines.push('');
   }
+
+  lines.push('LIMITS OF THIS COMPARISON');
+  for (const limitation of report.comparisonLimitations) {
+    lines.push(`  - ${limitation}`);
+  }
+  lines.push('');
 
   lines.push(`Confirmed bugs: ${report.interpretation.confirmedBug ? 'yes' : '0'}`);
   lines.push('A novel signal is a lead for review, not a confirmed defect.');

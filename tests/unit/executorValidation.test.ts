@@ -244,6 +244,8 @@ function result(overrides: Partial<StepExecutionResult> & { id: string; status: 
       pageChanged: false,
     },
     error: null,
+    skipReason: null,
+    verification: null,
     description: '',
     planConfidence: 0.7,
     ...overrides,
@@ -377,20 +379,23 @@ describe('deriveStatus', () => {
     expect(deriveStatus([result({ id: 'step-001', status: 'passed' })], false)).toBe('passed');
   });
 
-  it('is passed for an empty plan', () => {
-    expect(deriveStatus([], false)).toBe('passed');
+  it('is passed for a plan where every step was a no-op', () => {
+    // Nothing failed and nothing was blocked, so the run did not fail; with no
+    // executed step there is also no claim that anything was verified.
+    expect(deriveStatus([], false)).toBe('skipped');
   });
 
-  it('is partial when some steps are blocked but others passed', () => {
+  it('is blocked when a required step was refused', () => {
+    // A block is CrashLab declining to act, which is not a partial success.
     const status = deriveStatus(
       [result({ id: 'step-001', status: 'passed' }), result({ id: 'step-002', status: 'blocked' })],
       false,
     );
-    expect(status).toBe('partial');
+    expect(status).toBe('blocked');
   });
 
-  it('is failed when every step blocked and nothing was skipped', () => {
-    expect(deriveStatus([result({ id: 'step-001', status: 'blocked' })], false)).toBe('failed');
+  it('is blocked when every step was blocked and nothing was skipped', () => {
+    expect(deriveStatus([result({ id: 'step-001', status: 'blocked' })], false)).toBe('blocked');
   });
 
   it('is failed when a step failed and the run continued', () => {

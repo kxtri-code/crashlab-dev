@@ -38,6 +38,11 @@ export interface BaselineCreationRequest {
   confirmedBy: string | null;
   /** Report paths, echoed as references. */
   paths: { execution: string; anomalies: string; journey: string };
+  /**
+   * True when the operator explicitly allowed a partially verified run.
+   * Recorded on the baseline so the approval is auditable.
+   */
+  allowUnverifiedAssertions?: boolean;
   /** Where baselines are stored. */
   baselineDir?: string;
   /** Injected in tests; defaults to now. */
@@ -67,11 +72,21 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
   // Injected in tests so a baseline's createdAt is deterministic under test.
   const clock = request.now ?? ((): Date => new Date());
 
+  // Verification comes from the execution report when it carries it, and is
+  // `unavailable` for a legacy report rather than being invented.
+  const executionVerification = request.execution.verification ?? null;
+  const unverifiedAssertions = executionVerification?.unverifiedAssertions ?? 0;
+  const fullyVerified = executionVerification !== null && executionVerification.status === 'complete' && executionVerification.complete;
+
+  // A partially verified run is only recorded as such when the operator said so.
+  const partialApproved = !fullyVerified && request.allowUnverifiedAssertions === true;
+
   return {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     baselineId: request.baselineId,
     name: request.name,
-    status: 'known-good',
+    // A partial baseline is never dressed up as a full one.
+    status: fullyVerified ? 'known-good' : partialApproved ? 'known-good-partial' : 'known-good',
     createdAt: clock().toISOString(),
     confirmation: {
       explicit: true,
@@ -85,6 +100,14 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
     },
     identity,
     knownSignals,
+    verification: {
+      complete: fullyVerified,
+      coverage: fullyVerified
+        ? 'full-plan'
+        : (executionVerification?.coverage ?? 'unavailable'),
+      unverifiedAssertions,
+      operatorApproved: partialApproved,
+    },
     safety: {
       safeTestMode: request.execution.executor?.safeTestMode === true,
       // Safe test mode is the only mode that exists, so live payment can never
@@ -170,8 +193,8 @@ export function validateBaselineDocument(value: unknown, path: string): Baseline
   if (typeof record['baselineId'] !== 'string' || record['baselineId'].trim() === '') {
     return fail('baselineId is missing.');
   }
-  if (record['status'] !== 'known-good') {
-    return fail('status must be "known-good".');
+  if (record['status'] !== 'known-good' && record['status'] !== 'known-good-partial') {
+    return fail('status must be "known-good" or "known-good-partial".');
   }
   if (record['confirmation'] === undefined) {
     return fail('the operator confirmation block is missing.');

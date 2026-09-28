@@ -17,8 +17,9 @@ import type { JourneyAction, JourneyStep } from '../journey/types.js';
 import type { Locator } from 'playwright';
 import { join } from 'node:path';
 import { resolveStepTarget } from './locatorResolver.js';
+import { classifyAssertion } from './assertionClassifier.js';
+import type { BlockReason, SkipReason, StepObservations } from './types.js';
 import { resolveFixturePath, resolveValue } from './testData.js';
-import type { ActionOutcome } from './types.js';
 import type { ExecutionContext } from './executionContext.js';
 import { redactMessage } from './redaction.js';
 
@@ -73,6 +74,7 @@ async function resolveOrBlock(
         outcome: {
           status: 'skipped',
           reason: resolution.reason,
+          skipReason: 'no-target',
           message: resolution.message,
           observations: null,
         },
@@ -393,17 +395,49 @@ const navigate: ActionHandler = async (step, context) => {
  * that a target it identified is actually present. Anything else is reported
  * as unsupported rather than guessed at.
  */
+/**
+ * What an action handler returns.
+ *
+ * `skipped` is distinct from `blocked`: a step that had nothing to act on, or
+ * whose expectation was not machine-readable, is a legitimate observation, not
+ * a refusal, and must not stop the run.
+ */
+export interface ActionOutcome {
+  status: 'passed' | 'failed' | 'blocked' | 'skipped';
+  reason?: BlockReason;
+  message?: string;
+  observations?: StepObservations | null;
+  /** The plan string that was actually used, when a target was resolved. */
+  selectedLocator?: string | null;
+  /** Why the step was skipped, when skipping is the honest outcome. */
+  skipReason?: SkipReason | null;
+  /** Present when the step's expectation could not be evaluated. */
+  verification?: { status: 'unverified'; reason: string } | null;
+  /** Extra detail recorded alongside the step, always redacted. */
+  notes?: string[];
+}
+
+/**
+ * A prose assertion is skipped and marked unverified, never blocked.
+ *
+ * Blocking it was Build 3's original choice, and it was wrong: a block is a
+ * refusal on safety grounds and it aborted the whole run, so a journey whose
+ * executable steps all succeeded was recorded as a failure. An unverified
+ * expectation is neither a refusal nor a failure - nobody evaluated it.
+ */
 const assertStep: ActionHandler = async (step, context) => {
-  if (step.targetElementIds.length === 0 && step.locatorCandidates.length === 0) {
+  const verdict = classifyAssertion(step);
+
+  if (verdict.kind === 'prose-only' || verdict.kind === 'targeted-prose') {
     return {
-      status: 'blocked',
-      reason: 'unsupported-assertion',
-      message:
-        `Step "${step.id}" has no target to assert on. Its expected outcome is prose ` +
-        `("${step.expectedOutcome}") and Build 3 does not interpret natural language.`,
+      status: 'skipped',
+      skipReason: verdict.skipReason,
+      message: `Step "${step.id}" was not evaluated: ${verdict.reason}`,
+      verification: { status: 'unverified', reason: verdict.reason },
     };
   }
 
+  // A structured assertion with a real target: evaluate it as before.
   const resolution = await resolveStepTarget(context.page, step, 'observe');
   if (!resolution.ok) {
     return {

@@ -43,6 +43,11 @@ export interface ClassificationContext {
   reproduction: ReproductionReport | null;
   baseline: Baseline | null;
   compatibility: CompatibilityResult;
+  /**
+   * Step ids whose expectation the current execution left unverified. Sourced
+   * from `execution.json`; a signal on one of these is not evidence of novelty.
+   */
+  unverifiedStepIds: readonly string[];
 }
 
 /** The verdict for one signal, before ids are assigned. */
@@ -106,7 +111,7 @@ function findChangedBaselineSignal(
 
 /** Classify every current signal against the baseline. */
 export function classifyCandidates(context: ClassificationContext): Verdict[] {
-  const { anomalies, reproduction, baseline, compatibility } = context;
+  const { anomalies, reproduction, baseline, compatibility, unverifiedStepIds: unverifiedStepIdsInput } = context;
   const known = baseline?.knownSignals ?? [];
 
   // Reproduction result per anomaly id, so a signal is only judged on evidence
@@ -115,6 +120,11 @@ export function classifyCandidates(context: ClassificationContext): Verdict[] {
   for (const result of reproduction?.results ?? []) {
     reproductionByAnomaly.set(result.anomalyId, { id: result.id, classification: result.classification });
   }
+
+  // Build 6.1: steps whose expectation was never evaluated. A signal attached
+  // to one of these cannot support a novelty claim. Sourced from the execution
+  // report the anomalies were classified from, not invented here.
+  const unverifiedStepIds = new Set<string>(unverifiedStepIdsInput);
 
   const classifyCurrent = (): Verdict[] =>
     anomalies.anomalies.map((anomaly) => {
@@ -172,6 +182,22 @@ export function classifyCandidates(context: ClassificationContext): Verdict[] {
           'The signal reproduced, but in a different recorded environment than the baseline. ' +
           'It is neither novel nor persistent until the environments are reconciled.',
         requiresInvestigation: true,
+        reproductionClassification: repro?.classification ?? null,
+        stepOrder,
+        relatedBaselineKey: null,
+        baselineKeys: match ? [match.signalKey] : [],
+      });
+    }
+
+    // Build 6.1: a signal from an unverified assertion is not evidence of
+    // novelty. Nobody established what that step was supposed to prove, so
+    // neither "new" nor "already known" is supportable.
+    if (unverifiedStepIds.has(anomaly.id)) {
+      return verdict(anomaly, 'unknown', true, match !== undefined, true, {
+        message:
+          'The signal belongs to a step whose expectation was left unverified, so it cannot be called novel or persistent. ' +
+          'The observation is preserved for a human to judge.',
+        requiresInvestigation: false,
         reproductionClassification: repro?.classification ?? null,
         stepOrder,
         relatedBaselineKey: null,

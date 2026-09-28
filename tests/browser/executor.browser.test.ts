@@ -434,7 +434,10 @@ describe('executor: assert', () => {
     expect(report.steps[0]?.status).toBe('failed');
   });
 
-  it('blocks an assertion with nothing structural to check', async () => {
+  it('skips an assertion with nothing structural to check, as unverified', async () => {
+    // Build 6.1: a prose-only assertion is unverified, not blocked. Blocking it
+    // aborted the whole run, so a journey whose executable steps all succeeded
+    // was recorded as a failure.
     const report = await run([
       step({
         id: 'step-001',
@@ -444,9 +447,24 @@ describe('executor: assert', () => {
       }),
     ]);
     if (!report) return;
-    expect(report.steps[0]?.status).toBe('blocked');
-    expect(report.steps[0]?.error?.reason).toBe('unsupported-assertion');
-    expect(report.steps[0]?.error?.message).toMatch(/does not interpret natural language/);
+    expect(report.steps[0]?.status).toBe('skipped');
+    expect(report.steps[0]?.error).toBeNull();
+    expect(report.steps[0]?.skipReason).toBe('unsupported-prose-assertion');
+    expect(report.steps[0]?.verification?.status).toBe('unverified');
+  });
+
+  it('completes rather than aborting when only a prose assertion remains', async () => {
+    const report = await run([
+      step({ id: 'step-001', order: 1, action: 'identify', locatorCandidates: [testId('simple-button')] }),
+      step({ id: 'step-002', order: 2, action: 'assert', expectedOutcome: 'A friendly confirmation appears' }),
+    ]);
+    if (!report) return;
+    expect(report.steps[0]?.status).toBe('passed');
+    expect(report.steps[1]?.status).toBe('skipped');
+    // The run finished, and says so, without claiming the expectation passed.
+    expect(report.status).toBe('completed');
+    expect(report.verification?.status).toBe('partial');
+    expect(report.verification?.complete).toBe(false);
   });
 });
 

@@ -90,6 +90,9 @@ export { dispatchAction, supportsAction } from './executor/actionDispatcher.js';
 export { ScreenshotPolicy, MAX_SCREENSHOTS } from './executor/evidence.js';
 export type { ScreenshotResult, ScreenshotOmissionReason } from './executor/evidence.js';
 export { executeJourney, DEFAULT_STEP_TIMEOUT_MS } from './executor/executor.js';
+export { classifyAssertion, isUnverifiableAssertion, skipReasonFor } from './executor/assertionClassifier.js';
+export type { AssertionVerdict } from './executor/assertionClassifier.js';
+export { buildVerification, deriveExecutionStatus, isFullyVerified } from './executor/verification.js';
 export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
 export { ExecutionContext } from './executor/executionContext.js';
 export type { ActionOutcome } from './executor/types.js';
@@ -111,6 +114,11 @@ export {
   EvidenceConsoleEvent,
   EvidenceNetworkEvent,
   EvidencePageError,
+  SkipReason,
+  StepVerification,
+  ExecutionVerification,
+  VerificationStatus,
+  VerificationCoverage,
 } from './executor/types.js';
 
 // --- Build 4: Anomaly Engine ----------------------------------------------

@@ -22,6 +22,8 @@ This repository contains five builds, with two integration milestones layered on
   reproduction can be compared against the environment it was observed in.
 - **Build 6 — Baseline & Candidate Review** (`npm run baseline`, `npm run review`):
   records an explicit known-good state, then compares a later run against it.
+- **Build 6.1 — Complete Run Semantics**: a generated journey finishes in a reviewable
+  state instead of aborting on an assertion nobody can evaluate.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -1615,3 +1617,116 @@ What a baseline cannot yet do, and what a next milestone would have to add:
 None of these should be solved by an autonomous agent. The value so far is that every
 claim traces to a recorded artifact; a layer that cannot show its evidence would undo
 that.
+
+---
+
+## Build 6.1: Complete Run Semantics
+
+Build 2 plans routinely end with a prose step:
+
+```json
+{
+  "action": "assert",
+  "description": "Define the expected successful outcome",
+  "expectedOutcome": "The user is successfully logged in",
+  "targetElementIds": [],
+  "locatorCandidates": []
+}
+```
+
+Nothing can evaluate that. Build 3 originally treated it as a **blocking failure**,
+which meant a generated journey whose executable steps all succeeded ended `aborted` —
+and was then rejected as a baseline. That was wrong on both counts: an unsupported
+assertion is not a browser failure, it is an *unverified expectation*.
+
+> **An unverified assertion is not a passed assertion. It is also not an
+> automatically an application failure.**
+
+### How such a step is handled
+
+- **skipped**, with `skipReason: "unsupported-prose-assertion"`
+- `error: null` — it is not a failure and not a refusal
+- `verification: { status: "unverified", reason: "..." }` — nobody checked it
+- no browser action is launched, and the rest of the plan continues
+
+A **targeted** assertion with a usable locator is unaffected: Build 3's deterministic
+check (the element is present, visible, enabled) is machine-readable, so it is
+evaluated exactly as before. Only assertions with nothing to evaluate are skipped.
+
+### `completed` is not `passed`
+
+| Status | Meaning |
+| --- | --- |
+| `passed` | Every required action **and** every deterministic assertion succeeded |
+| `completed` | The plan finished, but one or more expectations are unverified |
+| `failed` | An attempted action or evaluated assertion did not succeed |
+| `blocked` | Execution was prevented before acting |
+| `partial` / `aborted` | Only part of the journey ran, or an interruption occurred |
+
+A run with a real failure or a safety block never becomes `completed`, even when a
+prose assertion is also present.
+
+### Verification metadata
+
+`execution.json` gains a `verification` object:
+
+```jsonc
+"verification": {
+  "status": "partial",           // complete | partial | incomplete | unavailable
+  "complete": false,
+  "executedSteps": 4,
+  "passedSteps": 4,
+  "failedSteps": 0,
+  "blockedSteps": 0,
+  "skippedSteps": 1,
+  "unverifiedAssertions": 1,
+  "unverifiedStepIds": ["step-005"],
+  "coverage": "executed-steps-only"  // full-plan | executed-steps-only | partial-plan | unavailable
+}
+```
+
+`verification.complete` is never `true` while an unverified assertion remains. A
+report with no `verification` block — a legacy artifact — is read as `unavailable`,
+never as complete.
+
+**Skipped is not failed.** A skipped step is a deliberate, recorded outcome: there was
+nothing to act on, or an expectation nobody could evaluate. A failed step means CrashLab
+acted and the application did not cooperate. A blocked step means CrashLab declined.
+None of them is reinterpreted as `passed`.
+
+### Partial baselines
+
+A `known-good-partial` baseline records a run that completed safely but left
+expectations unverified:
+
+```bash
+npm run baseline -- \
+  --execution reports/execution.json \
+  --anomalies reports/anomalies.json \
+  --journey reports/journey.json \
+  --baseline-id local-shop-good-v1 \
+  --name "Local shop known-good baseline" \
+  --confirm-known-good \
+  --allow-unverified-assertions
+```
+
+Rules:
+
+- `--allow-unverified-assertions` **requires** `--confirm-known-good`. Allowing a
+  partial run is not the same as approving it.
+- Without the flag, a partially verified run is refused, with the flag named in the
+  error.
+- The allowance **never** overrides a failed step, a blocked step, an aborted run, a
+  run without safe-test mode, or a payment-guard refusal.
+- The baseline is recorded as `known-good-partial` with
+  `coverage: "executed-steps-only"` and `operatorApproved: true`. It is never dressed
+  up as fully verified.
+
+A `known-good-partial` baseline is not a fully verified baseline, and the review says
+so: every report against one carries `baselineVerification` and
+`comparisonLimitations` stating that comparison reaches executed steps only. A signal
+attached to a step whose expectation was never evaluated is classified `unknown`, never
+`novel` or `persistent` — nobody established what that step was supposed to prove.
+
+An unverified assertion is not a confirmed bug, and a partial baseline is not a
+fully verified one.

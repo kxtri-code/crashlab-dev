@@ -26,7 +26,88 @@ export const SUPPORTED_JOURNEY_SCHEMA_VERSIONS = ['1.0'] as const;
  * `partial` and `aborted` are overall-only: they describe a run where some steps
  * ran and others did not. A single step is always one of the first four.
  */
-export type ExecutionStatus = 'passed' | 'failed' | 'blocked' | 'skipped' | 'partial' | 'aborted';
+/**
+ * Overall execution outcome.
+ *
+ * `completed` and `passed` are deliberately distinct. `passed` means every
+ * required executable action *and* every deterministic assertion was evaluated
+ * and succeeded. `completed` means the plan finished processing, but at least
+ * one expectation was left unverified - a natural-language assertion with no
+ * machine-readable target.
+ *
+ * Completion is not success. A run that clicked everything it could and could
+ * not evaluate its final prose assertion has `completed`, and its
+ * `verification.status` is `partial`.
+ */
+export type ExecutionStatus =
+  | 'passed'
+  | 'completed'
+  | 'failed'
+  | 'blocked'
+  | 'skipped'
+  | 'partial'
+  | 'aborted';
+
+/**
+ * How much of the plan the run actually evaluated.
+ *
+ * - `complete`            - every required action and deterministic assertion
+ *                           was evaluated
+ * - `partial`             - the run finished, but some assertions are
+ *                           unverified
+ * - `incomplete`          - the run was interrupted, blocked or failed before
+ *                           sufficient execution
+ * - `unavailable`         - a legacy report that predates this metadata
+ */
+export type VerificationStatus = 'complete' | 'partial' | 'incomplete' | 'unavailable';
+
+/**
+ * How far the verification reaches.
+ *
+ * - `full-plan`           - the whole plan was evaluated
+ * - `executed-steps-only` - only steps with a deterministic target were
+ *                           evaluated; the rest are unverified
+ * - `partial-plan`        - some required steps did not run at all
+ * - `unavailable`         - no verification metadata
+ */
+export type VerificationCoverage = 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+
+/**
+ * Top-level verification record.
+ *
+ * This exists so a reader can tell a fully verified run from one that merely
+ * finished. It never claims `complete` while an unverified assertion remains:
+ * a run that skipped its final prose expectation is `partial`, always.
+ */
+export interface ExecutionVerification {
+  status: VerificationStatus;
+  /** Convenience mirror of `status !== 'complete'`. */
+  complete: boolean;
+  executedSteps: number;
+  passedSteps: number;
+  failedSteps: number;
+  blockedSteps: number;
+  skippedSteps: number;
+  /** How many skipped steps were unverified assertions rather than no-ops. */
+  unverifiedAssertions: number;
+  /** Ids of the unverified assertion steps, in order. */
+  unverifiedStepIds: string[];
+  coverage: VerificationCoverage;
+}
+
+/** Per-step verification note, for a step whose expectation could not be checked. */
+export interface StepVerification {
+  status: 'unverified';
+  reason: string;
+}
+
+/** Why a step was skipped, when skipping is the honest outcome. */
+export type SkipReason =
+  | 'unsupported-prose-assertion'
+  | 'no-target'
+  | 'unsupported-action'
+  | 'skipped-step'
+  | 'stopped-after-failure';
 
 /** Why a step could not proceed. */
 export type BlockReason =
@@ -140,6 +221,16 @@ export interface StepExecutionResult {
   evidence: StepEvidence;
   /** Populated when status is `failed` or `blocked`. */
   error: StepError | null;
+  /**
+   * Why the step was skipped, when it was. A skipped step with no error is a
+   * deliberate, non-failing outcome, not a suppressed failure.
+   */
+  skipReason: SkipReason | null;
+  /**
+   * Present when the step's expectation could not be evaluated. An unverified
+   * assertion is neither passed nor failed: nobody checked it.
+   */
+  verification: StepVerification | null;
   /** Step description, echoed from the immutable plan. */
   description: string;
   /** Step confidence, echoed from the immutable plan. Not a pass/fail signal. */
@@ -206,6 +297,11 @@ export interface ExecutionReport {
   journeyType: JourneyType;
   target: { url: string; finalUrl: string | null; title: string };
   status: ExecutionStatus;
+  /**
+   * How much of the plan was actually verified. Null only for a report written
+   * before this existed, which readers treat as `unavailable`.
+   */
+  verification: ExecutionVerification | null;
   startedAt: string;
   finishedAt: string;
   durationMs: number;

@@ -333,6 +333,12 @@ export function baselineOf(options: {
     },
     identity: { ...options.identity, environmentFingerprint: options.environmentFingerprint ?? options.identity.environmentFingerprint },
     knownSignals: options.signals ?? [],
+    verification: {
+      complete: true,
+      coverage: 'full-plan',
+      unverifiedAssertions: 0,
+      operatorApproved: false,
+    },
     safety: { safeTestMode: true, livePaymentAllowed: false, executionHadFailures: false, executionIncomplete: false },
     rationale: 'fixture baseline',
     interpretation: { confirmedBug: false, automaticSeverity: false, note: 'fixture' },

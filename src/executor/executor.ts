@@ -77,12 +77,15 @@ async function safeAsync<T>(fn: () => Promise<T>): Promise<T | null> {
       pageChanged: false,
     },
     error: {
-      // A skip records why, but is not a failure, so no structured reason.
+      // A skip is a consequence of a preceding outcome, not a step failure. The
+      // reason is carried in skipReason rather than here.
       reason: 'action-failed',
       message: reason,
       attemptedLocators: [],
       missingDataKey: null,
     },
+    skipReason: reason === 'execution stopped after an earlier failure' ? 'stopped-after-failure' : 'skipped-step',
+    verification: null,
     description: step.description,
     planConfidence: step.confidence,
   };
@@ -232,6 +235,12 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
                 attemptedLocators: step.locatorCandidates,
                 missingDataKey: null,
               },
+        // A skip carries its reason explicitly, so a skipped step is never a
+        // silent gap in the record.
+        skipReason: outcome.status === 'skipped' ? (outcome.skipReason ?? 'no-target') : null,
+        // Present only when an expectation could not be evaluated. Absent means
+        // the step either succeeded or genuinely had nothing to do.
+        verification: outcome.status === 'skipped' ? (outcome.verification ?? null) : null,
         description: step.description,
         planConfidence: step.confidence,
       });

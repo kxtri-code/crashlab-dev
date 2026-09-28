@@ -170,6 +170,19 @@ function emptyExecution(input: ReproductionInput) {
     // An attempt that never launched a browser has no environment to record.
     // Null reads as "unknown" downstream, which is the honest answer.
     environment: null,
+    // Nothing ran, so nothing was verified.
+    verification: {
+      status: 'incomplete' as const,
+      complete: false,
+      executedSteps: 0,
+      passedSteps: 0,
+      failedSteps: 0,
+      blockedSteps: 0,
+      skippedSteps: 0,
+      unverifiedAssertions: 0,
+      unverifiedStepIds: [],
+      coverage: 'partial-plan' as const,
+    },
   };
 }
 

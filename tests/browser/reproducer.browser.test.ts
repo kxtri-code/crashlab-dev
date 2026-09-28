@@ -109,6 +109,20 @@ async function buildPipeline(path = '/checkout', goal = 'Try to complete checkou
       safeTestMode: true,
     },
     environment: null,
+    // Built by the report builder in a real run; a synthetic execution
+    // fixture states the equivalent shape.
+    verification: {
+      status: 'complete' as const,
+      complete: true,
+      executedSteps: 0,
+      passedSteps: 0,
+      failedSteps: 0,
+      blockedSteps: 0,
+      skippedSteps: 0,
+      unverifiedAssertions: 0,
+      unverifiedStepIds: [],
+      coverage: 'full-plan' as const,
+    },
   };
 
   const anomalies = buildAnomalyReport({

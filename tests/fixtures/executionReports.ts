@@ -34,6 +34,8 @@ export function execStep(overrides: Partial<StepExecutionResult> & { id: string;
       pageChanged: false,
     },
     error: null,
+    skipReason: null,
+    verification: null,
     description: '',
     planConfidence: 0.7,
     ...overrides,
@@ -77,6 +79,9 @@ export function execution(overrides: Partial<ExecutionReport> = {}): ExecutionRe
     // Provenance is opt-in for a fixture. A legacy-shaped report (no
     // environment) is a real case and is covered by the compatibility tests.
     environment: null,
+    // Derived from the steps by the report builder; a fixture states it only
+    // when it is testing a specific verification shape.
+    verification: null,
     ...overrides,
   };
 }

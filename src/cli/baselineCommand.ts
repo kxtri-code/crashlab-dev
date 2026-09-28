@@ -35,6 +35,7 @@ export const BASELINE_FLAGS = [
   '--accept-signal',
   '--confirmed-by',
   '--confirm-known-good',
+  '--allow-unverified-assertions',
   '--baseline-dir',
 ] as const;
 
@@ -49,6 +50,11 @@ export interface ParsedBaselineArgs {
   confirmedBy: string | null;
   /** The gate. Absent means no baseline is created. */
   confirmKnownGood: boolean;
+  /**
+   * Build 6.1: allows a partially verified run to become a
+   * `known-good-partial` baseline. Never overrides a failed or blocked run.
+   */
+  allowUnverifiedAssertions: boolean;
   baselineDir: string;
   valid: boolean;
   error: string | null;
@@ -67,6 +73,7 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
     acceptedSignalIds: [],
     confirmedBy: null,
     confirmKnownGood: false,
+    allowUnverifiedAssertions: false,
     baselineDir: DEFAULT_BASELINE_DIR,
     valid: true,
     error: null,
@@ -114,6 +121,17 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
   parsed.acceptedSignalIds.sort();
 
   parsed.confirmKnownGood = scan.flags.has('--confirm-known-good');
+  parsed.allowUnverifiedAssertions = scan.flags.has('--allow-unverified-assertions');
+
+  // The allowance is not a confirmation: allowing a partial run still requires
+  // a human to say the state is known-good.
+  if (parsed.allowUnverifiedAssertions && !parsed.confirmKnownGood) {
+    parsed.error =
+      'Refusing to create a baseline: --allow-unverified-assertions requires --confirm-known-good. ' +
+      'Allowing a partially verified run is not the same as approving it.';
+    parsed.valid = false;
+    return parsed;
+  }
 
   // The baseline id is sanitized, so an unsafe one is refused rather than
   // written. It is a filename, so a path or a credential must never become one.
@@ -159,6 +177,12 @@ Options:
   --confirm-known-good     REQUIRED. A baseline records a human's judgement
                            that this state is normal; it is never inferred
                            from a green exit code.
+  --allow-unverified-assertions
+                           Permit a run that left prose assertions
+                           unverified. The baseline is recorded as
+                           known-good-partial, covering executed steps
+                           only. Requires --confirm-known-good, and never
+                           overrides a failed or blocked run.
 
 Baselines are immutable. A duplicate id is refused rather than overwritten.
 
@@ -215,6 +239,7 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     anomalies,
     journey,
     acceptedSignalIds: args.acceptedSignalIds,
+    allowUnverifiedAssertions: args.allowUnverifiedAssertions,
     paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
   });
 
@@ -239,6 +264,7 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
       acceptedSignalIds: validation.acceptedSignalIds,
       confirmedBy: args.confirmedBy === null ? null : safeVersion(args.confirmedBy, 'operator'),
       paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
+      allowUnverifiedAssertions: args.allowUnverifiedAssertions,
       baselineDir: args.baselineDir,
     });
 
@@ -249,11 +275,17 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     console.log(`  Baseline ID:    ${baseline.baselineId}`);
     console.log(`  Name:           ${baseline.name}`);
     console.log(`  Status:         ${baseline.status}`);
+    console.log(`  Verified:       ${baseline.verification.coverage}${baseline.verification.complete ? '' : ' (partial)'}`);
     console.log(`  Target origin:  ${baseline.identity.targetOrigin ?? '(unknown)'}`);
     console.log(`  Journey hash:   ${baseline.identity.journeyHash}`);
     console.log(`  Environment:    ${baseline.identity.environmentFingerprint ?? '(no provenance)'}`);
     console.log(`  Known signals:  ${baseline.knownSignals.length}`);
     console.log(`  Accepted:       ${baseline.confirmation.acceptedSignalIds.length}`);
+    if (baseline.status === 'known-good-partial') {
+      console.log('');
+      console.log('  This baseline is NOT fully verified. It covers executed steps only,');
+      console.log(`  and ${baseline.verification.unverifiedAssertions} expectation(s) remain unverified.`);
+    }
     console.log('');
     console.log(`  ${BASELINE_SUMMARY_NOTE}`);
     console.log(`  Baseline: ${toDisplayPath(written)}`);

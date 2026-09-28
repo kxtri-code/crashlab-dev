@@ -18,8 +18,17 @@ import type { ExecutionReport } from '../executor/types.js';
 import type { JourneyPlan } from '../journey/types.js';
 import { BaselineError } from './types.js';
 
-/** Execution statuses from which a baseline may be created. */
-const ACCEPTABLE_EXECUTION_STATUSES = new Set(['passed', 'partial']);
+/**
+ * Execution statuses a baseline may be created from.
+ *
+ * `completed` is included because Build 6.1 made it the normal outcome for a
+ * generated journey: every executable action succeeded and a prose assertion
+ * was left unverified. That is a healthy run, not a failed one.
+ */
+const ACCEPTABLE_EXECUTION_STATUSES = new Set(['passed', 'completed', 'partial']);
+
+/** Step statuses that make a run unusable as a baseline, whatever else is true. */
+const DISQUALIFYING_STEP_STATUSES = new Set(['failed', 'blocked']);
 
 /** Signal levels that must be explicitly accepted before a baseline is clean. */
 const UNRESOLVED_LEVELS = new Set(['error']);
@@ -31,6 +40,11 @@ export interface BaselineValidationInput {
   journey: JourneyPlan;
   /** Anomaly ids the operator explicitly accepted. */
   acceptedSignalIds: string[];
+  /**
+   * Whether the operator allowed a partially verified run. Without it, a run
+   * carrying unverified assertions is refused rather than quietly downgraded.
+   */
+  allowUnverifiedAssertions?: boolean;
   /** Paths, echoed into any error so the operator knows which file. */
   paths?: { execution: string; anomalies: string; journey: string };
 }
@@ -39,6 +53,12 @@ export interface BaselineValidationInput {
 export interface BaselineValidationResult {
   /** True when a baseline may be created. */
   safe: boolean;
+  /**
+   * True when the run is only partially verified and the operator approved it.
+   * The baseline is then recorded as `known-good-partial`, never as fully
+   * verified.
+   */
+  partial: boolean;
   /** Problems that make the run unusable as a baseline. */
   blockers: string[];
   /** Warnings worth recording without blocking. */
@@ -123,9 +143,47 @@ export function validateBaselineCandidate(input: BaselineValidationInput): Basel
     blockers.push('Every step was blocked, so the run never exercised the journey.');
   }
 
+  // A real failure or refusal disqualifies a baseline outright. Allowing
+  // unverified assertions must not become a route around this.
   const failedSteps = stepStatuses.filter((stepStatus) => stepStatus === 'failed').length;
+  const blockedSteps = stepStatuses.filter((stepStatus) => stepStatus === 'blocked').length;
   if (failedSteps > 0) {
-    warnings.push(`${failedSteps} step(s) failed in the source execution.`);
+    blockers.push(
+      `${failedSteps} step(s) failed. A run with a real execution failure cannot become a baseline, ` +
+        'with or without --allow-unverified-assertions.',
+    );
+  }
+  if (blockedSteps > 0) {
+    blockers.push(
+      `${blockedSteps} step(s) were blocked. A refusal is CrashLab declining to act, not a known-good state, ` +
+        'and allowing unverified assertions does not override it.',
+    );
+  }
+
+  // --- verification ------------------------------------------------------
+  const verification = input.execution.verification ?? null;
+  let partial = false;
+
+  if (verification === null) {
+    // A legacy report. It can still become a baseline, but nothing is claimed
+    // about how much of the plan was verified.
+    warnings.push(
+      'The execution report has no verification metadata. The baseline will be recorded without a verification claim.',
+    );
+  } else if (!verification.complete) {
+    const unverified = verification.unverifiedAssertions;
+    if (input.allowUnverifiedAssertions === true) {
+      partial = true;
+      warnings.push(
+        `The run left ${unverified} expectation(s) unverified. The baseline is recorded as ` +
+          'known-good-partial, covering executed steps only.',
+      );
+    } else {
+      blockers.push(
+        `The run left ${unverified} expectation(s) unverified, so it is not a fully verified state. ` +
+          'Re-run with --allow-unverified-assertions to record it as a known-good-partial baseline.',
+      );
+    }
   }
 
   // --- provenance --------------------------------------------------------
@@ -162,6 +220,7 @@ export function validateBaselineCandidate(input: BaselineValidationInput): Basel
 
   return {
     safe: blockers.length === 0,
+    partial,
     blockers,
     warnings,
     acceptedSignalIds: [...known].sort(),
