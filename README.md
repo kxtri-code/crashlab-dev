@@ -20,6 +20,8 @@ This repository contains five builds, with two integration milestones layered on
   number of times and reports whether a signal recurred.
 - **Build 5.1 — Environment Provenance**: records *where* each run happened, so a
   reproduction can be compared against the environment it was observed in.
+- **Build 6 — Baseline & Candidate Review** (`npm run baseline`, `npm run review`):
+  records an explicit known-good state, then compares a later run against it.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -421,6 +423,135 @@ Provenance says **where** a signal reproduced. It says nothing about whether tha
 a defect, and `confirmed: false` is unchanged on every result. Knowing a signal
 reproduces in `build-002` but not `build-001` narrows an investigation; it does not
 conclude one.
+
+---
+
+## Build 6: Baseline Registry and Candidate-Defect Review
+
+Build 5 could say a signal recurred. It could not say whether that signal was *new*.
+
+Build 6 adds the missing half: an explicit **known-good baseline** that a later run is
+compared against.
+
+> **No baseline means unknown, not novel.**
+
+That principle is the reason a baseline is never inferred. A run that produced no
+signals may simply have collected no evidence, and treating its absence of signals as
+"known good" would make every future signal look novel — the exact failure a baseline
+is meant to prevent. So a baseline is created **only** when a human says so.
+
+### Creating a baseline
+
+```bash
+npm run baseline -- \
+  --execution reports/execution.json \
+  --anomalies reports/anomalies.json \
+  --journey reports/journey.json \
+  --baseline-id local-shop-good-v1 \
+  --name "Local shop known-good baseline" \
+  --confirm-known-good
+```
+
+`--confirm-known-good` is required. Without it nothing is created, nothing is read,
+and the command exits `1`.
+
+The run is also refused when it is not a safe, meaningful state: an aborted or
+blocked execution, a run without safe-test mode, a run where every step was skipped
+or blocked, or unresolved error-level signals.
+
+To record a state where a signal is *expected*, accept it explicitly:
+
+```bash
+npm run baseline -- ... --accept-signal anomaly-001 --accept-signal anomaly-003 --confirm-known-good
+```
+
+`--accept-signal` is repeatable, is never inferred, and is stored in the baseline so
+the record is auditable. An id that matches no present anomaly is refused.
+
+Baselines are **immutable**: a duplicate id is refused rather than overwritten. A new
+state gets a new id, because the old record is the only thing that makes "changed"
+detectable.
+
+### Running a review
+
+```bash
+npm run review -- \
+  --baseline reports/baselines/local-shop-good-v1.json \
+  --execution reports/execution.json \
+  --anomalies reports/anomalies.json \
+  --reproduction reports/reproduction.json \
+  --journey reports/journey.json
+```
+
+Output goes to `reports/candidates.json`. Both `--baseline` and `--reproduction` are
+optional: without a baseline everything is `unknown`, and without a reproduction
+nothing has been shown to recur, so nothing can be a candidate. Use
+`--no-reproduction` to skip reading that report.
+
+### Baseline identity
+
+A baseline records target origin, journey hash, journey schema version, journey type,
+environment fingerprint, and the build and environment ids when supplied. Two runs are
+comparable only when those agree.
+
+The **journey hash** covers canonical plan content — goal, journey type, and each
+step's id, order, action, targets and locators. A reworded description does not change
+it; a changed action or locator does. That is what makes "the plan changed" detectable
+without churning a baseline over cosmetics.
+
+### Compatibility
+
+| Comparison | Meaning |
+| --- | --- |
+| `same-environment` | Compatible, and the environment fingerprint matches |
+| `different-environment` | Compatible target and journey, different environment |
+| `unknown-environment` | Provenance is missing on either side |
+| `different-build` | Application build ids differ |
+| `incompatible-journey` | Journey hash, type, schema, or target origin differs |
+| `no-baseline` | Nothing to compare against |
+
+A different target origin, a different journey, or a different application build means
+the signal sets are **not compared**. Reporting signals from two different
+applications as "novel" would be actively misleading.
+
+### Classifications
+
+| Classification | Meaning | Review status |
+| --- | --- | --- |
+| `novel` | Reproduced, and absent from a compatible baseline | `needs-review` |
+| `persistent` | Present in both; already expected | `known-existing` |
+| `resolved` | In the baseline, absent now | `not-present` |
+| `changed` | A related signal exists in both but a safe detail differs | `needs-review` |
+| `cross-environment` | Reproduced, but in a different recorded environment | `needs-review` |
+| `different-build` | Reproduced, but against a different application build | `needs-review` |
+| `unknown` | No baseline, incompatible, or not reproduced | `inconclusive` |
+
+**Reproduction gates every real verdict.** A signal becomes `novel` only if Build 5
+classified it `reproduced` *and* a compatible baseline did not contain it. An
+unreproduced, inconclusive or blocked signal is `unknown` with a stated reason — a
+one-off observation is as likely transient as it is a fault, and promoting it would
+train a reviewer to ignore the queue.
+
+**`novel` does not mean `defective`.** It means "not present in this baseline". A
+signal may be entirely expected behaviour the baseline predates.
+
+### Immutability and redaction
+
+Baseline creation and review read their inputs and write only new files. `journey.json`,
+`execution.json`, `anomalies.json`, `reproduction.json` and existing baselines are never
+mutated. Candidate reports reference those artifacts by path rather than inlining
+them, and carry no raw evidence, no absolute path, and no test-data value.
+
+### Build 6 does **not** do
+
+- No AI, model, or external API.
+- No dashboard, backend, database, or billing — storage is a directory of JSON files.
+- No automatic bug confirmation, severity ranking, root-cause analysis, or fix
+  suggestion. `confirmed: false` is structural, not a default.
+- No change to any existing classification: `passed`, `failed`, `blocked`, `skipped`,
+  `observed`, `reproduced`, `not-reproduced` and `inconclusive` all mean what they
+  meant before.
+- No browser execution and no network calls.
 
 ### Build 5 does **not** do
 
@@ -1275,6 +1406,16 @@ src/
     fingerprint.ts   PURE: canonical serialization and SHA-256
     comparison.ts    PURE: same / different / unknown
     reportMetadata.ts  safe fact collection and record assembly
+  baseline/         Build 6 - pure, file-based storage
+    types.ts         the baseline contract
+    identity.ts      PURE: journey hash and signal projection
+    validator.ts     PURE: may this run be a known-good state?
+    writer.ts        immutable file storage and the registry index
+  review/           Build 6 - pure, no browser and no network
+    types.ts         the candidate contract
+    compatibility.ts PURE: may these two runs be compared at all?
+    classifier.ts    PURE: novel / persistent / resolved / changed / unknown
+    candidateReport.ts  report assembly + terminal summary
   report/
     build.ts          PURE: Scout report assembly + terminal summary
     write.ts          shared JSON persistence
@@ -1459,3 +1600,18 @@ that every claim is backed by a recorded artifact; an investigative layer that c
 show its evidence would undo that.
 
 Not implemented.
+
+What a baseline cannot yet do, and what a next milestone would have to add:
+
+- **Baselines are per-identity, not per-run.** A baseline is only comparable to runs
+  sharing its journey hash, origin and build. Two journeys, or one journey across two
+  application builds, need two baselines. There is no baseline selection.
+- **No trend.** One baseline answers "is this new?". It cannot say "this is new *since
+  Tuesday*", because nothing links baselines to each other over time.
+- **Review state does not persist.** A candidate is regenerated identically on every
+  run; assigning it, dismissing it or linking it to a ticket would be the first state
+  CrashLab stores — and therefore the first thing needing a durability story.
+
+None of these should be solved by an autonomous agent. The value so far is that every
+claim traces to a recorded artifact; a layer that cannot show its evidence would undo
+that.

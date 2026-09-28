@@ -24,6 +24,8 @@ import { JOURNEY_USAGE, runJourneyCommand } from './cli/journeyCommand.js';
 import { EXECUTE_USAGE, runExecuteCommand } from './cli/executeCommand.js';
 import { ANOMALY_USAGE, runAnomalyCommand } from './cli/anomalyCommand.js';
 import { REPRODUCE_USAGE, runReproduceCommand } from './cli/reproduceCommand.js';
+import { BASELINE_USAGE, runBaselineCommand } from './cli/baselineCommand.js';
+import { REVIEW_USAGE, runReviewCommand } from './cli/reviewCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -54,6 +56,8 @@ Usage:
   npm run execute -- --journey reports/journey.json --confirm-authorized
   npm run anomalies -- --execution reports/execution.json --journey reports/journey.json
   npm run reproduce -- --anomalies reports/anomalies.json --journey reports/journey.json --confirm-authorized
+  npm run baseline -- --baseline-id <id> --confirm-known-good
+  npm run review -- --baseline reports/baselines/<id>.json
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -61,6 +65,8 @@ Commands:
   execute        Attempt a journey plan in a browser (Build 3)
   anomalies      Classify evidence signals from an execution report (Build 4)
   reproduce      Rerun a journey to test whether a signal recurs (Build 5)
+  baseline       Record an explicit known-good state (Build 6)
+  review         Compare a run against a baseline for candidate defects (Build 6)
   help           Show this message
   version        Print the build version
 
@@ -340,6 +346,22 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runReproduceCommand(rest);
+  }
+
+  if (first === 'baseline') {
+    if (wantsHelp(rest)) {
+      console.log(BASELINE_USAGE);
+      return 0;
+    }
+    return runBaselineCommand(rest);
+  }
+
+  if (first === 'review') {
+    if (wantsHelp(rest)) {
+      console.log(REVIEW_USAGE);
+      return 0;
+    }
+    return runReviewCommand(rest);
   }
 
   return main([...argv]);

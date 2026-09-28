@@ -8,6 +8,11 @@ reports/*.json
 # screenshots a rerun captured before sensitive data entered the page.
 reports/reproduction/
 
+# Build 6 baselines are operator-authored known-good records for one local
+# environment. They are the input to every later review, so a machine-specific
+# one should not be committed by default. Track specific baselines explicitly.
+reports/baselines/
+
 # Build 3 evidence: screenshots can show whatever was on the page.
 evidence/
 

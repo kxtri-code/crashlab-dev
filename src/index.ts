@@ -204,6 +204,44 @@ export {
 } from './provenance/reportMetadata.js';
 export type { ProvenanceFacts } from './provenance/reportMetadata.js';
 
+// --- Build 6: Baseline Registry and Candidate Review -----------------------
+// Pure. No browser, no network, no database. Baseline and review read local
+// reports and write new ones; neither mutates an input.
+
+export { BASELINE_SCHEMA_VERSION, BaselineError, DEFAULT_BASELINE_DIR, BASELINE_REGISTRY_FILE } from './baseline/types.js';
+export type {
+  Baseline,
+  BaselineConfirmation,
+  BaselineIdentity,
+  BaselineSafety,
+  BaselineSignal,
+  BaselineSource,
+  BaselineStatus,
+  BaselineRegistry,
+} from './baseline/types.js';
+export { buildBaselineIdentity, canonicalJourneyContent, journeyHash, signalKeyHash, toBaselineSignal } from './baseline/identity.js';
+export { validateBaselineCandidate, assertBaselineCandidate } from './baseline/validator.js';
+export type { BaselineValidationInput, BaselineValidationResult } from './baseline/validator.js';
+export { buildBaseline, readBaseline, writeBaseline, readRegistry, baselinePathFor, validateBaselineDocument } from './baseline/writer.js';
+export type { BaselineCreationRequest } from './baseline/writer.js';
+
+export { REVIEW_SCHEMA_VERSION, DEFAULT_CANDIDATE_OUTPUT_PATH } from './review/types.js';
+export type {
+  Candidate,
+  CandidateEvidence,
+  CandidateReport,
+  CandidateSummary,
+  CandidateClassification,
+  ReviewComparison,
+  ReviewStatus,
+} from './review/types.js';
+export { checkCompatibility } from './review/compatibility.js';
+export type { CompatibilityResult } from './review/compatibility.js';
+export { classifyCandidates, toCandidates } from './review/classifier.js';
+export type { ClassificationContext } from './review/classifier.js';
+export { buildCandidateReport, summarizeCandidateReport, summarizeCandidates, writeCandidateReport } from './review/candidateReport.js';
+export type { ReviewInput } from './review/candidateReport.js';
+
 // --- Build 5: Controlled Reproducer ---------------------------------------
 // Matching, eligibility and classification are pure. Only `attemptRunner.ts`
 // reaches the browser, and it does so by calling the existing Build 3 executor

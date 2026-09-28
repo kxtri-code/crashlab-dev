@@ -15,6 +15,8 @@
 import { readFile } from 'node:fs/promises';
 import type { ExecutionReport, StepExecutionResult } from '../executor/types.js';
 import type { JourneyPlan } from '../journey/types.js';
+import type { AnomalyReport } from './report.js';
+import { ANOMALY_SCHEMA_VERSION } from './types.js';
 import {
   AnomalyInputError,
   SUPPORTED_ANOMALY_JOURNEY_SCHEMA_VERSIONS,
@@ -47,6 +49,39 @@ async function readJson(path: string, label: string): Promise<unknown> {
   } catch (error) {
     throw new AnomalyInputError(path, `${label} report is not valid JSON: ${(error as Error).message}`);
   }
+}
+
+/**
+ * Load and validate a single execution report.
+ *
+ * Added for Build 6, which needs one report at a time. It reuses the existing
+ * validation rather than restating it, so the two cannot drift apart.
+ */
+export async function loadExecutionInput(path: string): Promise<ExecutionReport> {
+  return validateExecutionReport(await readJson(path, 'Execution'), path);
+}
+
+/**
+ * Load and validate a single anomaly report.
+ *
+ * Build 6's baseline and review commands both need this, and a report that
+ * cannot be read is a refusal rather than an empty result.
+ */
+export async function loadAnomalyInput(path: string): Promise<AnomalyReport> {
+  const value = await readJson(path, 'Anomaly');
+  if (!isRecord(value)) {
+    throw new AnomalyInputError(path, 'Anomaly report root must be a JSON object.');
+  }
+  if (value['schemaVersion'] !== ANOMALY_SCHEMA_VERSION) {
+    throw new AnomalyInputError(
+      path,
+      `Unsupported anomaly report schemaVersion "${String(value['schemaVersion'])}".`,
+    );
+  }
+  if (!Array.isArray(value['anomalies'])) {
+    throw new AnomalyInputError(path, 'Anomaly report is missing an anomalies array.');
+  }
+  return value as unknown as AnomalyReport;
 }
 
 /**
