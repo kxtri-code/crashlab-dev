@@ -4,7 +4,7 @@ CrashLab is a usage-based autonomous software QA platform. The long-term goal is
 let a developer point it at an authorized web app, describe a goal like *"try to
 complete checkout"*, set a budget, and have it discover failures before real users do.
 
-This repository currently contains four builds, with one integration milestone layered on Build 3:
+This repository currently contains five builds, with one integration milestone layered on Build 3:
 
 - **Build 1 — Scout** (`npm run scout`): opens an authorized page, maps it, captures
   telemetry, and writes a deterministic local JSON report.
@@ -16,14 +16,21 @@ This repository currently contains four builds, with one integration milestone l
   mode is the default, and screenshots stop once test data has entered the page.
 - **Build 4 — Anomaly Engine** (`npm run anomalies`): reads a completed execution
   report and classifies deterministic evidence signals.
+- **Build 5 — Controlled Reproducer** (`npm run reproduce`): reruns a journey a bounded
+  number of times and reports whether a signal recurred.
 
 Each build is a separate artifact, and no build rewrites another's:
 
 ```
-reports/scout.json      what is on the page          (Build 1)
-reports/journey.json    what should be attempted     (Build 2) - immutable input
-reports/execution.json  what happened when attempted (Build 3) - immutable input
-reports/anomalies.json  what looked abnormal         (Build 4)
+reports/scout.json          what is on the page          (Build 1)
+reports/journey.json        what should be attempted     (Build 2) - immutable input
+reports/execution.json      what happened when attempted (Build 3) - immutable input
+reports/anomalies.json      what looked abnormal         (Build 4) - immutable input
+reports/reproduction.json   did it happen again          (Build 5)
+reports/reproduction/
+  attempt-001/
+    execution.json           one controlled rerun        (Build 5)
+    anomalies.json           its classified signals      (Build 5)
 ```
 
 Build 2 **plans only** and Build 3 **only attempts**. An execution result is not a
@@ -172,6 +179,131 @@ indistinguishable rows.
 
 A finding reads "HTTP 500 response observed during execution", never "checkout is
 definitely broken".
+
+---
+
+## Build 5: Controlled Reproducer and Confirmation
+
+Build 5 answers one question: **"did this observed signal occur again under
+controlled repeat execution?"**
+
+It reads `anomalies.json` and `journey.json`, reruns the journey a bounded number of
+times, re-classifies each rerun with the Build 4 rules, and reports whether each
+signal recurred. It does **not** answer "is this a bug".
+
+```bash
+npm run reproduce -- \
+  --anomalies reports/anomalies.json \
+  --journey reports/journey.json \
+  --attempts 3 \
+  --confirm-authorized
+
+# With test data, used unchanged for every attempt
+npm run reproduce -- \
+  --anomalies reports/anomalies.json \
+  --journey reports/journey.json \
+  --data tests/fixtures/executor-test-data.json \
+  --attempts 3 \
+  --confirm-authorized
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--anomalies <path>` | `reports/anomalies.json` | Signals to test |
+| `--journey <path>` | `reports/journey.json` | The journey to rerun |
+| `--data <path>` | — | Test data, identical for every attempt |
+| `-o, --out <path>` | `reports/reproduction.json` | Reproduction report |
+| `--attempts <n>` | `3` | Controlled attempts, 1–5 |
+| `--timeout <ms>` | executor default | Per-step executor timeout |
+| `--headed` | off | Visible browser window |
+| `--include-possibly-expected` | off | Also rerun signals excluded by default |
+| `--confirm-authorized` | **required** | Confirms authorization for the target |
+
+### Reproduced is not broken
+
+```
+Observed signal
+  ↓
+Controlled reruns
+  ↓
+Reproduced or not reproduced
+  ↓
+Candidate for investigation
+  ↓
+Human or later investigation confirms meaning
+```
+
+Every result carries `confirmed: false`, and the report carries
+`interpretation.confirmedBug: false`. A recurring signal is a *lead*. A page that
+reliably returns 500 on a health-check probe reproduces perfectly and is not a defect.
+
+| Classification | Meaning |
+| --- | --- |
+| `reproduced` | Seen in at least 2 completed attempts (the threshold) |
+| `not-reproduced` | Absent from every completed attempt |
+| `inconclusive` | One hit out of three, a run with no stable key, or attempts that could not settle it |
+| `blocked` | No attempt could run — browser failure, unusable target |
+| `ineligible` | Excluded before any attempt, with the reason recorded |
+
+The threshold of two exists because one hit out of three is a coincidence far more
+often than a fault. `reproductionRatio` is a count like `2/3`, never a probability.
+
+### Eligibility
+
+Reproduced by default: `HTTP_5XX`, `NETWORK_REQUEST_FAILED`, `CONSOLE_ERROR`,
+`PAGE_ERROR`, `STEP_TIMEOUT`, `TARGET_MISSING_AFTER_ACTION`,
+`TARGET_DISABLED_AFTER_ACTION`, `EXECUTION_ACTION_FAILED`.
+
+Excluded by default, each with a recorded reason: `HTTP_4XX`, `CONSOLE_WARNING`,
+`DUPLICATE_REQUEST`, `UNEXPECTED_ORIGIN` — all commonly expected, and all of which
+reproduce perfectly while meaning nothing. Also never reproduced: any `info`-level
+signal, and any signal with no stable comparison key.
+
+`--include-possibly-expected` opts the rule-excluded group in. It never turns one into
+a confirmed bug.
+
+### Attempt limits
+
+Default 3, minimum 1, **maximum 5**. Out-of-range values are rejected, not clamped, so
+asking for 50 tells you rather than silently running 5. These are declared reproduction
+attempts under an explicit budget, not hidden retry logic: `automaticRetries` is always
+`false`, and every attempt is written to its own report and counted.
+
+### Strategy
+
+One journey rerun per attempt, not one per anomaly. Every signal is therefore evaluated
+under identical conditions, which is what makes the comparison meaningful. Each attempt
+uses a fresh browser context and page, the same plan, the same test data, the same
+target, and the same executor settings.
+
+### Safety
+
+`--confirm-authorized` is required and is checked *before* anything is read or opened.
+Safe test mode is inherited from the executor and stays unconditional; there is no
+live-payment flag and the payment guard is not weakened. Rerun execution reports keep
+the executor's screenshot omission: once test data enters the page, later screenshots
+are omitted with a recorded reason.
+
+The journey, execution and anomaly reports are read and left byte-identical. Rerun
+artifacts go to `reports/reproduction/attempt-NNN/` and never overwrite them.
+
+### Matching
+
+Two runs of the same journey never produce byte-identical evidence: ports, ids and
+timestamps differ. Signals are compared on a normalized key that strips run-to-run noise
+while preserving what identifies the signal — 404 never matches 500, GET never matches
+POST, and a console error never matches a page error.
+
+Stack traces are reduced to their first line before comparison, so an unstable path
+cannot cause a miss and a value inside it cannot leak.
+
+### Build 5 does **not** do
+
+- No AI, model, or external API.
+- No root-cause analysis, severity ranking, or fix suggestions.
+- No unlimited retries or hidden retry loop.
+- No journey mutation, plan repair, or automatic retry of a step.
+- No modification of `journey.json`, `execution.json`, or `anomalies.json`.
 
 ---
 
@@ -965,6 +1097,7 @@ src/
     journeyCommand.ts the Build 2 `journey` command
     executeCommand.ts the Build 3 `execute` command
     anomalyCommand.ts the Build 4 `anomalies` command
+    reproduceCommand.ts the Build 5 `reproduce` command
   scout/              Build 1 - browser-backed
     types.ts          the Scout report contract
     browser.ts        Chromium launch and teardown
@@ -1002,6 +1135,15 @@ src/
     rules.ts         PURE: the deterministic rules
     classifier.ts    PURE: dedup, stable ordering, stable ids
     report.ts        PURE: report assembly + terminal summary
+  reproducer/        Build 5 - matching and classification are pure
+    types.ts         the reproduction contract and its limits
+    inputLoader.ts   PURE: validation of the anomaly and journey inputs
+    normalization.ts PURE: run-to-run noise removal and matching keys
+    eligibility.ts   PURE: which signals are worth rerunning
+    resultClassifier.ts PURE: reproduced / not-reproduced / inconclusive
+    attemptRunner.ts runs one attempt via the existing executor
+    reproductionReport.ts PURE: report assembly + terminal summary
+    reproducer.ts    orchestration and the safety gates
   report/
     build.ts          PURE: Scout report assembly + terminal summary
     write.ts          shared JSON persistence
@@ -1033,6 +1175,13 @@ Build 4 extends the boundary one step further: **the whole of `src/anomaly/` is
 pure.** It imports no Playwright, opens no browser, and makes no network call. Its
 only I/O is reading `execution.json` and `journey.json` and writing
 `anomalies.json`.
+
+Build 5 inverts the browser boundary: the reproducer *is* allowed a browser, but it
+reaches one only by calling the existing Build 3 executor in process. It duplicates
+no action logic and no anomaly rules — `attemptRunner.ts` reuses the executor, and each
+attempt's signals come from re-running the same Build 4 classifier. Everything
+deciding *what* to compare — normalization, eligibility, classification — is pure
+and unit-tested without a browser.
 
 ### One trap worth knowing about
 
@@ -1153,9 +1302,23 @@ provider, key, or network surface attached to Build 2.
 
 ## Next build
 
-**Build 5: Reproducer and Confirmation** — rerun a suspicious journey against a
-controlled environment to establish whether an observed signal is reproducible, and
-only then decide whether it is a defect. Not started.
+Builds 1–5 complete the deterministic path: **map → plan → execute → classify →
+reproduce**. What is deliberately absent is the part that turns a reproducible
+candidate into a *diagnosis*.
 
-Build 4 deliberately stops at "observed". Without reproduction, a signal is a lead
-worth investigating, not a finding.
+The next step is investigative rather than deterministic, and is a product decision
+rather than an implementation one:
+
+- **A candidate-defect review surface** — triage, assign, and track the reproduced
+  signals Build 5 produces, so they are not lost between runs.
+- **Environment-aware reproduction** — a signal that reproduces against production
+  data may not reproduce against a controlled fixture. Recording the environment a
+  signal reproduces in is a prerequisite for trusting the result at all.
+- **Baseline comparison** — distinguish "this always happens" from "this is new",
+  which needs a recorded baseline rather than a single run.
+
+None of these should be built as an autonomous agent. The value in CrashLab so far is
+that every claim is backed by a recorded artifact; an investigative layer that cannot
+show its evidence would undo that.
+
+Not implemented.

@@ -4,6 +4,10 @@ dist/
 # Reports are per-run and may contain target URLs.
 reports/*.json
 
+# Build 5 rerun artifacts: per-attempt execution and anomaly reports, plus the
+# screenshots a rerun captured before sensitive data entered the page.
+reports/reproduction/
+
 # Build 3 evidence: screenshots can show whatever was on the page.
 evidence/
 

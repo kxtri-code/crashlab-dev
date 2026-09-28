@@ -155,3 +155,54 @@ export {
   INTERPRETATION_NOTE,
 } from './anomaly/report.js';
 export type { AnomalyReport } from './anomaly/report.js';
+
+// --- Build 5: Controlled Reproducer ---------------------------------------
+// Matching, eligibility and classification are pure. Only `attemptRunner.ts`
+// reaches the browser, and it does so by calling the existing Build 3 executor
+// in process: no duplicated action logic, no child processes.
+
+export {
+  REPRODUCTION_SCHEMA_VERSION,
+  SUPPORTED_ANOMALY_SCHEMA_VERSIONS,
+  SUPPORTED_REPRODUCER_JOURNEY_SCHEMA_VERSIONS,
+  DEFAULT_ATTEMPTS,
+  MIN_ATTEMPTS,
+  MAX_ATTEMPTS,
+  REPRODUCTION_THRESHOLD,
+  ReproductionInputError,
+} from './reproducer/types.js';
+export type {
+  ReproductionInput,
+  ReproductionReport,
+  ReproductionResult,
+  ReproductionRun,
+  ReproductionClassification,
+  ReproductionSummary,
+  ReproducerMeta,
+  SafetySummary,
+  ReproductionEvidence,
+  ReproductionInterpretation,
+  IneligibilityReason as ReproductionIneligibilityReason,
+  AttemptStatus,
+} from './reproducer/types.js';
+export {
+  loadReproductionInputs,
+  validateAnomalyReport,
+  validateJourneyReport as validateReproducerJourney,
+  validateAttempts,
+  signalsOf,
+} from './reproducer/inputLoader.js';
+export { matchingKeyFor, normalizeMessage, normalizeUrl, signalsMatch } from './reproducer/normalization.js';
+export { partitionEligible, ineligibilityFor, hasEligibleSignals, DEFAULT_ELIGIBLE_RULES, DEFAULT_INELIGIBLE_RULES } from './reproducer/eligibility.js';
+export { classifyReproduction, formatRatio, ineligibleOutcome } from './reproducer/resultClassifier.js';
+export { runAttempt, attemptName, attemptPaths } from './reproducer/attemptRunner.js';
+export { reproduceSignals, ReproductionRefused, assertAttemptsValid } from './reproducer/reproducer.js';
+export {
+  buildReproductionReport,
+  buildResults,
+  summarizeResults,
+  summarizeReproductionReport,
+  writeReproductionReport,
+  DEFAULT_REPRODUCTION_OUTPUT_PATH,
+  REPRODUCTION_NOTE,
+} from './reproducer/reproductionReport.js';

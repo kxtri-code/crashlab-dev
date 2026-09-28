@@ -23,6 +23,7 @@ import { TOOL_NAME, TOOL_VERSION } from './version.js';
 import { JOURNEY_USAGE, runJourneyCommand } from './cli/journeyCommand.js';
 import { EXECUTE_USAGE, runExecuteCommand } from './cli/executeCommand.js';
 import { ANOMALY_USAGE, runAnomalyCommand } from './cli/anomalyCommand.js';
+import { REPRODUCE_USAGE, runReproduceCommand } from './cli/reproduceCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -52,12 +53,14 @@ Usage:
   npm run journey -- --goal "<goal>" --scout reports/scout.json
   npm run execute -- --journey reports/journey.json --confirm-authorized
   npm run anomalies -- --execution reports/execution.json --journey reports/journey.json
+  npm run reproduce -- --anomalies reports/anomalies.json --journey reports/journey.json --confirm-authorized
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
   journey        Plan a user journey from a goal and a Scout report (Build 2)
   execute        Attempt a journey plan in a browser (Build 3)
   anomalies      Classify evidence signals from an execution report (Build 4)
+  reproduce      Rerun a journey to test whether a signal recurs (Build 5)
   help           Show this message
   version        Print the build version
 
@@ -299,8 +302,8 @@ function isMainModule(): boolean {
  * Dispatch to the right build command.
  *
  * `scout` maps a page (Build 1), `journey` plans one (Build 2), `execute`
- * attempts one (Build 3), and `anomalies` reads an execution report and
- * classifies evidence signals (Build 4).
+ * attempts one (Build 3), `anomalies` classifies evidence signals (Build 4),
+ * and `reproduce` reruns a journey to test whether a signal recurs (Build 5).
  */
 export async function dispatch(argv: readonly string[]): Promise<number> {
   const first = argv[0];
@@ -329,6 +332,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runAnomalyCommand(rest);
+  }
+
+  if (first === 'reproduce' || first === 'repro') {
+    if (wantsHelp(rest)) {
+      console.log(REPRODUCE_USAGE);
+      return 0;
+    }
+    return runReproduceCommand(rest);
   }
 
   return main([...argv]);

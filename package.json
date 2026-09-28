@@ -20,6 +20,8 @@
     "execute:env": "node --env-file=.env --import tsx src/cli.ts execute",
     "anomalies": "tsx src/cli.ts anomalies",
     "anomalies:env": "node --env-file=.env --import tsx src/cli.ts anomalies",
+    "reproduce": "tsx src/cli.ts reproduce",
+    "reproduce:env": "node --env-file=.env --import tsx src/cli.ts reproduce",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
