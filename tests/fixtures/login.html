@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sign in - CrashLab Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Sign in to your account</h1>
+      <form action="/session" method="post">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" />
+
+        <label>
+          <input type="checkbox" name="remember" /> Remember me
+        </label>
+
+        <button type="submit">Sign in</button>
+      </form>
+      <a href="/forgot">Forgot your password?</a>
+    </main>
+  </body>
+</html>

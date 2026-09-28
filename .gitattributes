@@ -1,0 +1,12 @@
+# Normalize line endings so a checkout is byte-identical across platforms.
+# Without this, a Windows checkout rewrites LF to CRLF and produces spurious diffs
+# against the Build 2 checkpoint.
+* text=auto eol=lf
+
+# Keep the Build 1 HTML fixtures and JSON fixtures byte-exact: they are test
+# inputs whose content is asserted on.
+tests/fixtures/*.html -text
+tests/fixtures/*.json -text
+
+# Lockfiles are generated; keep them diffable but not line-ending sensitive.
+package-lock.json text eol=lf

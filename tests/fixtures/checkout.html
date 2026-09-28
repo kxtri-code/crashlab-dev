@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="description" content="Fixture checkout page used by CrashLab tests." />
+    <link rel="canonical" href="http://127.0.0.1:PORT/checkout" />
+    <title>Checkout - CrashLab Fixture</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Checkout</h1>
+      <nav aria-label="Primary">
+        <a href="/cart">Cart</a>
+        <a href="https://example.com/help">Help</a>
+      </nav>
+    </header>
+
+    <main>
+      <form id="checkout-form" action="/api/orders" method="post">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" placeholder="you@example.com" required />
+
+        <label for="card">
+          Card number
+          <input id="card" name="card" type="text" placeholder="4242 4242 4242 4242" />
+        </label>
+
+        <label for="country">Country</label>
+        <select id="country" name="country">
+          <option value="us">United States</option>
+          <option value="de">Germany</option>
+        </select>
+
+        <label for="notes">Delivery notes</label>
+        <textarea id="notes" name="notes" placeholder="Optional"></textarea>
+
+        <input type="checkbox" id="save-card" name="save_card" />
+        <label for="save-card">Save this card</label>
+
+        <input type="hidden" name="csrf" value="static-token-value" />
+        <input type="submit" value="Place order" data-testid="place-order" />
+        <button type="button" id="apply-promo" data-testid="apply-promo">Apply promo code</button>
+      </form>
+
+      <button role="checkbox" aria-checked="false" id="gift-wrap" aria-label="Gift wrap">Gift wrap</button>
+      <div contenteditable="true" id="gift-message" aria-label="Gift message"></div>
+
+      <!-- Present in the DOM but not rendered: the mapper must mark it hidden. -->
+      <button type="button" id="hidden-admin" style="display: none">Admin tools</button>
+      <button type="button" id="disabled-submit" disabled>Unavailable</button>
+    </main>
+
+    <footer>
+      <p>Fixture page. No real checkout happens here.</p>
+    </footer>
+
+    <script src="/app.js"></script>
+    <script>
+      // Deterministic telemetry for assertions: one warning, one console error,
+      // and one uncaught page error. Also fires the failing request below.
+      console.warn('fixture: slow third-party widget');
+      console.error('fixture: deprecated API call');
+      fetch('/api/telemetry?token=supersecret&ok=1');
+      fetch('/api/missing-resource');
+      setTimeout(function () {
+        throw new Error('fixture: uncaught late failure');
+      }, 10);
+    </script>
+  </body>
+</html>

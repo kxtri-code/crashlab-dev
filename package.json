@@ -1,0 +1,36 @@
+{
+  "name": "crashlab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CrashLab - usage-based autonomous software QA platform. Build 1: CLI-first Playwright scout.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "bin": {
+    "crashlab": "./dist/cli.js"
+  },
+  "scripts": {
+    "scout": "tsx src/cli.ts",
+    "scout:env": "node --env-file=.env --import tsx src/cli.ts",
+    "journey": "tsx src/cli.ts journey",
+    "journey:env": "node --env-file=.env --import tsx src/cli.ts journey",
+    "setup": "playwright install chromium",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:browser": "vitest run tests/browser",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

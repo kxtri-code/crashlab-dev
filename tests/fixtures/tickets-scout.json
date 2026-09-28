@@ -1,0 +1,89 @@
+{
+  "meta": {
+    "tool": "CrashLab Scout",
+    "version": "0.1.0",
+    "schemaVersion": 1,
+    "createdAt": "2026-09-28T10:00:00.000Z",
+    "durationMs": 820,
+    "browser": "chromium",
+    "userAgent": "fixture",
+    "viewport": { "width": 1280, "height": 800 },
+    "navigationTimings": { "domContentLoadedMs": 90, "loadMs": 180, "timeSinceNavigationMs": 700 },
+    "config": {
+      "headless": true,
+      "timeoutMs": 30000,
+      "settleMs": 1000,
+      "slowMoMs": 0,
+      "ignoreHttpsErrors": false,
+      "domScope": ["a[href]", "button", "input", "select", "textarea"]
+    }
+  },
+  "target": {
+    "inputUrl": "https://events.example.test/concert",
+    "finalUrl": "https://events.example.test/concert",
+    "title": "Concert Tickets",
+    "redirected": false,
+    "secureContext": true
+  },
+  "page": {
+    "detectedPageType": "list",
+    "pageTypeConfidence": 0.7,
+    "pageTypeReason": "repeated sibling blocks",
+    "pageTypeCandidates": [],
+    "visibleTextSample": "Concert Tickets. Choose your seats and buy tickets.",
+    "visibleTextLength": 48,
+    "readyState": "complete",
+    "htmlLang": "en",
+    "canonicalUrl": null,
+    "metaDescription": null
+  },
+  "interactiveElements": [
+    {
+      "type": "button", "tag": "button", "text": "Buy ticket", "label": null, "name": "buy",
+      "id": "buy-ticket", "placeholder": null, "ariaLabel": null, "role": null, "href": null,
+      "inputType": null, "value": null, "selector": "#buy-ticket",
+      "locator": "page.getByTestId('buy-ticket')", "visible": true, "enabled": true,
+      "required": false, "disabled": false, "readonly": false, "index": 0, "formIndex": null
+    },
+    {
+      "type": "button", "tag": "button", "text": "Reserve seat", "label": null, "name": "reserve",
+      "id": "reserve", "placeholder": null, "ariaLabel": null, "role": null, "href": null,
+      "inputType": null, "value": null, "selector": "#reserve", "locator": null,
+      "visible": true, "enabled": true, "required": false, "disabled": false, "readonly": false,
+      "index": 1, "formIndex": null
+    },
+    {
+      "type": "select", "tag": "select", "text": "Number of tickets", "label": "Number of tickets",
+      "name": "quantity", "id": "qty", "placeholder": null, "ariaLabel": null, "role": null,
+      "href": null, "inputType": null, "value": null, "selector": "#qty", "locator": null,
+      "visible": true, "enabled": true, "required": false, "disabled": false, "readonly": false,
+      "index": 2, "formIndex": null
+    },
+    {
+      "type": "link", "tag": "a", "text": "View basket", "label": null, "name": null, "id": null,
+      "placeholder": null, "ariaLabel": null, "role": null,
+      "href": "https://events.example.test/basket", "inputType": null, "value": null,
+      "selector": "a[href='/basket']", "locator": "page.getByRole('link', { name: 'View basket' })",
+      "visible": true, "enabled": true, "required": false, "disabled": false, "readonly": false,
+      "index": 3, "formIndex": null
+    },
+    {
+      "type": "button", "tag": "button", "text": "Pay now", "label": null, "name": "pay", "id": "pay",
+      "placeholder": null, "ariaLabel": null, "role": null, "href": null, "inputType": null,
+      "value": null, "selector": "#pay", "locator": null, "visible": true, "enabled": true,
+      "required": false, "disabled": false, "readonly": false, "index": 4, "formIndex": null
+    }
+  ],
+  "forms": [],
+  "network": [],
+  "networkSummary": {
+    "totalRequests": 0, "failedRequests": 0, "errorResponses": 0, "slowRequests": 0,
+    "thirdPartyRequests": 0, "byMethod": {}, "byResourceType": {}, "byStatus": []
+  },
+  "console": [],
+  "consoleSummary": { "total": 0, "byType": {} },
+  "errors": [],
+  "scoutErrors": [],
+  "warnings": [],
+  "elementCounts": { "button": 3, "link": 1, "input": 0, "select": 1, "textarea": 0, "checkbox": 0, "radio": 0, "other": 0 }
+}
