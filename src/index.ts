@@ -76,7 +76,7 @@ export { BROWSER_NAME, REPORT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION } from './
 
 export { loadJourneyPlan, validateJourneyPlan, SUPPORTED_ACTIONS } from './executor/planValidator.js';
 export { loadTestData, resolveValue, semanticKeysForIntent, resolveFixturePath } from './executor/testData.js';
-export { collectSecrets, createScrubber, isSensitiveTestDataKey, redactExecutionUrl, redactMessage, summarizeValue, NO_SECRETS, REDACTED } from './executor/redaction.js';
+export { collectSecrets, createScrubber, isSensitiveTestDataKey, redactExecutionUrl, redactMessage as redactExecutionMessage, summarizeValue, NO_SECRETS, REDACTED } from './executor/redaction.js';
 export {
   compilePlanLocator,
   compileLocatorExpression,
@@ -98,8 +98,7 @@ export {
   SUPPORTED_JOURNEY_SCHEMA_VERSIONS,
   ExecutionRefused,
   JourneyPlanError,
-} from './executor/types.js';
-export type {
+} from './executor/types.js';export type {
   ExecutionOptions,
   ExecutionReport,
   ExecutionStatus,
@@ -113,3 +112,46 @@ export type {
   EvidenceNetworkEvent,
   EvidencePageError,
 } from './executor/types.js';
+
+// --- Build 4: Anomaly Engine ----------------------------------------------
+// Pure analysis. Nothing below imports Playwright, opens a browser, or makes a
+// network call; it reads two local JSON artifacts and writes a third.
+
+export {
+  ANOMALY_SCHEMA_VERSION,
+  SUPPORTED_EXECUTION_SCHEMA_VERSIONS,
+  SUPPORTED_ANOMALY_JOURNEY_SCHEMA_VERSIONS,
+  RULE_IDS,
+  AnomalyInputError,
+} from './anomaly/types.js';
+export type {
+  Anomaly,
+  AnomalyKind,
+  AnomalySource,
+  AnomalyStatus,
+  AnomalySummary,
+  AnalyzerMeta,
+  EvidenceType,
+  Interpretation,
+  RuleId,
+  SignalLevel,
+} from './anomaly/types.js';
+export { loadAnalysisInputs, validateExecutionReport, validateJourneyReport, orderedSteps } from './anomaly/validator.js';
+export { classifySignals, sanitizeUrl } from './anomaly/classifier.js';
+export { collectSignals } from './anomaly/rules.js';
+export type { RawSignal, RuleContext } from './anomaly/rules.js';
+export {
+  redactMessage,
+  redactStack,
+  sanitizeFailure,
+  sanitizePath,
+  sanitizeUrl as sanitizeAnomalyUrl,
+} from './anomaly/redaction.js';export {
+  buildAnomalyReport,
+  summarizeAnomalies,
+  summarizeAnomalyReport,
+  writeAnomalyReport,
+  DEFAULT_ANOMALY_OUTPUT_PATH,
+  INTERPRETATION_NOTE,
+} from './anomaly/report.js';
+export type { AnomalyReport } from './anomaly/report.js';

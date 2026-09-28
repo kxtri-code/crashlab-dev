@@ -4,7 +4,7 @@ CrashLab is a usage-based autonomous software QA platform. The long-term goal is
 let a developer point it at an authorized web app, describe a goal like *"try to
 complete checkout"*, set a budget, and have it discover failures before real users do.
 
-This repository currently contains three builds, with one integration milestone layered on Build 3:
+This repository currently contains four builds, with one integration milestone layered on Build 3:
 
 - **Build 1 — Scout** (`npm run scout`): opens an authorized page, maps it, captures
   telemetry, and writes a deterministic local JSON report.
@@ -12,15 +12,18 @@ This repository currently contains three builds, with one integration milestone 
   plus a Scout report into a structured, deterministic journey plan.
 - **Build 3 — Journey Executor** (`npm run execute`): attempts a journey plan in a
   browser and records what happened, in a separate report.
-- **Build 3.1 — Execution Readiness**: generated plans now carry real actions, safe-test
+- **Build 3.1 — Execution Readiness**: generated plans carry real actions, safe-test
   mode is the default, and screenshots stop once test data has entered the page.
+- **Build 4 — Anomaly Engine** (`npm run anomalies`): reads a completed execution
+  report and classifies deterministic evidence signals.
 
-Each build is a separate artifact:
+Each build is a separate artifact, and no build rewrites another's:
 
 ```
 reports/scout.json      what is on the page          (Build 1)
 reports/journey.json    what should be attempted     (Build 2) - immutable input
-reports/execution.json  what happened when attempted (Build 3)
+reports/execution.json  what happened when attempted (Build 3) - immutable input
+reports/anomalies.json  what looked abnormal         (Build 4)
 ```
 
 Build 2 **plans only** and Build 3 **only attempts**. An execution result is not a
@@ -51,7 +54,124 @@ npm run execute -- \
 ```
 
 `journey.json` is an immutable input. The executor reads its bytes, runs, and reads
-them again; the integration test asserts they are byte-identical.
+them again; the integration test asserts they are byte-identical. The same holds for
+Build 4: it reads `execution.json` and `journey.json` and writes only
+`anomalies.json`.
+
+---
+
+## Build 4: Anomaly Engine
+
+Build 4 answers one question: **"what suspicious or abnormal signals were observed
+during this execution?"**
+
+It reads a completed execution report and the journey it came from, applies
+deterministic rules, and writes structured observations. It does **not** answer
+"is this a software bug?" — confirming that requires reproduction, which is Build 5.
+
+```bash
+npm run anomalies -- \
+  --execution reports/execution.json \
+  --journey reports/journey.json
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--execution <path>` | `reports/execution.json` | The execution report to analyse |
+| `--journey <path>` | `reports/journey.json` | The journey it came from, for origin context |
+| `-o, --out <path>` | `reports/anomalies.json` | Anomaly report path |
+| `--include-console-warnings` | off | Also report console warnings |
+
+### A signal is not a bug
+
+Three fields carry the meaning, and the distinction matters:
+
+- **`status: "observed"`** — a deterministic rule matched recorded evidence. It
+  happened; it is not diagnosed.
+- **`confirmed: false`** — always false, on every signal and on the report as a
+  whole. Build 4 never confirms a bug.
+- **`possiblyExpected: true`** — the signal may be legitimate given context. A 401
+  on a protected resource, a 404 for a probe, a repeated analytics beacon.
+
+`signalLevel` (`info` / `warning` / `error`) describes how direct the observation
+is. It is **not** product severity, and Build 4 assigns no defect ranking.
+
+### Statuses are not equivalent
+
+The single most important behaviour in this build: the engine distinguishes a step
+that *did something wrong* from one that CrashLab *declined to do*.
+
+| Situation | Anomaly? |
+| --- | --- |
+| Step `passed` | no |
+| Step `skipped` — observational, nothing to act on | **no** |
+| Step `blocked` by the payment guard | **no** — a safety policy, not an application fault |
+| Step `blocked` for missing test data | **no** — the operator supplied nothing |
+| Step `blocked` for an ambiguous locator | **no** — CrashLab would not choose arbitrarily |
+| Step `blocked` for off-origin navigation | **no** — already refused, so re-reporting double-counts |
+| Step `failed` with a real reason | yes, when the reason is not a refusal |
+
+A step that never touched the page cannot tell you anything about the page. A
+refusal is a policy outcome, not a finding.
+
+### Rule IDs
+
+Stable identifiers, part of the output contract:
+
+| Rule ID | Raised when |
+| --- | --- |
+| `HTTP_5XX` | A 5xx response was recorded. `error` level. |
+| `HTTP_4XX` | A 4xx response was recorded. `warning`, and `possiblyExpected` for common statuses (400/401/403/404/409/410/422/429). |
+| `NETWORK_REQUEST_FAILED` | A request produced no response at all. Distinct from an HTTP error: there is no status, so the transport failure reason is recorded. |
+| `CONSOLE_ERROR` | A console `error`. `possiblyExpected` — a page logging its own error is common. |
+| `CONSOLE_WARNING` | A console `warning`, only with `--include-console-warnings`. Off by default because warnings are frequently expected. |
+| `PAGE_ERROR` | An uncaught exception. `error` level. |
+| `STEP_TIMEOUT` | A step's `error.reason` is `timed-out`. **Never inferred** from a long duration. |
+| `UNEXPECTED_ORIGIN` | A non-skipped, non-blocked step moved to an origin other than the authorized target. Marked `possiblyExpected`, since an identity-provider redirect is routine. |
+| `TARGET_MISSING_AFTER_ACTION` | An *attempted* action found no target. |
+| `TARGET_DISABLED_AFTER_ACTION` | An *attempted* action found the target unusable. |
+| `DUPLICATE_REQUEST` | The same method + URL + resource type appeared 2+ times. `info`, and `possiblyExpected` for asset-like types. |
+| `EXECUTION_ACTION_FAILED` | A step was attempted and failed, with a reason that is not a refusal and is not owned by another rule. |
+
+Each failure reason belongs to exactly one rule, so a single event is never counted
+twice.
+
+### Redaction
+
+Build 3 already redacts before writing `execution.json`, but Build 4 cannot assume
+that — it may be pointed at a report produced elsewhere. So it re-redacts on the way
+out, matching secret *shapes* rather than known values (the analyzer is
+deliberately given no test data): bearer/basic authorization values, JWTs, provider
+tokens, `key=value` secret pairs, and card-number-shaped digit runs. URLs are
+sanitized, console text is scrubbed, and a page-error stack is reduced to its first
+line.
+
+A message made *entirely* of secret material is reported as omitted rather than as a
+bare `REDACTED`, which a reader could mistake for the original content. There is no
+OCR or model-based redaction, and images are referenced by path only.
+
+### Determinism
+
+Analysing the same two inputs produces byte-identical output. There is no
+timestamp, no random id, and no resolved absolute path. Signals are ordered by step
+order, then evidence index, then a fixed rule-priority table, then rule id, then a
+normalized event key.
+
+**Dedup policy:** one signal per distinct (rule, step, event, key), with an
+occurrence count. The same event appearing twice yields one signal, not two
+indistinguishable rows.
+
+### Build 4 does **not** do
+
+- No browser, no Playwright, no network call. It reads two local files and writes a
+  third.
+- No AI, no model, no external API.
+- No retries and no reproduction of any failure.
+- No bug confirmation, severity ranking, root-cause analysis, or fix suggestions.
+- No modification of `journey.json` or `execution.json`.
+
+A finding reads "HTTP 500 response observed during execution", never "checkout is
+definitely broken".
 
 ---
 
@@ -844,6 +964,7 @@ src/
     args.ts           shared flag scanner (--flag value and --flag=value)
     journeyCommand.ts the Build 2 `journey` command
     executeCommand.ts the Build 3 `execute` command
+    anomalyCommand.ts the Build 4 `anomalies` command
   scout/              Build 1 - browser-backed
     types.ts          the Scout report contract
     browser.ts        Chromium launch and teardown
@@ -874,6 +995,13 @@ src/
     evidence.ts            evidence capture, reusing Build 1 recorders
     executionReport.ts     PURE: report assembly + terminal summary
     executor.ts            the one place a browser is launched
+  anomaly/           Build 4 - pure, no Playwright and no network
+    types.ts         the anomaly report contract + stable rule ids
+    validator.ts     PURE: structural validation of both input artifacts
+    redaction.ts     PURE: shape-based scrubbing of text, URLs and stacks
+    rules.ts         PURE: the deterministic rules
+    classifier.ts    PURE: dedup, stable ordering, stable ids
+    report.ts        PURE: report assembly + terminal summary
   report/
     build.ts          PURE: Scout report assembly + terminal summary
     write.ts          shared JSON persistence
@@ -900,6 +1028,11 @@ Build 3 keeps that separation in both directions: `src/journey/` still imports n
 Playwright, and Build 3 adds no planning logic. Validation, test-data resolution and
 redaction are pure and unit-testable; only `executor.ts` and the action handlers
 touch a browser, and they act solely on locators the plan supplied.
+
+Build 4 extends the boundary one step further: **the whole of `src/anomaly/` is
+pure.** It imports no Playwright, opens no browser, and makes no network call. Its
+only I/O is reading `execution.json` and `journey.json` and writing
+`anomalies.json`.
 
 ### One trap worth knowing about
 
@@ -997,12 +1130,32 @@ provider, key, or network surface attached to Build 2.
   approved phrase. A well-labelled control with an icon and no text stays
   observational, which is the conservative side of the trade.
 
+### Build 4 (Anomaly Engine)
+
+- Signals are classified per event, not correlated. A 500 and a page error during
+  the same request are two signals; deciding they are one incident is Build 5's
+  job with reproduction to support it.
+- Attribution is coarse. `rawEvidence` is a run-level array with no per-step
+  window in the report, so most evidence-based signals carry a step id of `null`
+  and point at an event index instead. Per-step evidence exists but does not
+  always cover the whole run.
+- `DUPLICATE_REQUEST` keys on method + URL + resource type, so a legitimate retry
+  with the same body looks identical to a bug. It is reported at `info` and marked
+  `possiblyExpected` for asset types, but a reviewer must judge it.
+- `UNEXPECTED_ORIGIN` compares against the execution target's origin. A journey
+  whose own steps are *supposed* to leave the target will always raise it; there is
+  no per-step expected-origin field in the current schema to consult.
+- Console warnings are off by default, so a warning-only regression is invisible
+  unless `--include-console-warnings` is passed.
+- Redaction is pattern-based, not exhaustive. An unusual secret format could pass
+  through; the engine scrubs known shapes and relies on Build 3 having already
+  redacted at the source.
+
 ## Next build
 
-**Build 4: Anomaly Engine** — read the raw evidence in `execution.json` and
-classify it: HTTP errors, duplicate requests, JavaScript exceptions, unexpected
-redirects, timeouts, and broken UI state, reported as observations about the run
-rather than confirmed bugs. Not started.
+**Build 5: Reproducer and Confirmation** — rerun a suspicious journey against a
+controlled environment to establish whether an observed signal is reproducible, and
+only then decide whether it is a defect. Not started.
 
-Reproduction belongs to Build 5. A failed execution is not automatically a product
-bug, and a single observation is not yet evidence of anything.
+Build 4 deliberately stops at "observed". Without reproduction, a signal is a lead
+worth investigating, not a finding.
