@@ -30,6 +30,12 @@ function fixtureResponse(pathname: string): { status: number; type: string; body
   if (pathname === '/boom') {
     return { status: 500, type: 'text/plain; charset=utf-8', body: 'internal fixture error' };
   }
+  if (pathname === '/api/probe') {
+    return { status: 200, type: 'application/json', body: '{"ok":true}' };
+  }
+  if (pathname === '/submitted') {
+    return { status: 200, type: 'text/html; charset=utf-8', body: '<!doctype html><title>Submitted</title><h1>Submitted</h1>' };
+  }
   return { status: 404, type: 'text/plain; charset=utf-8', body: 'fixture route not found' };
 }
 
@@ -55,6 +61,8 @@ export async function startFixtureServer(): Promise<{ server: Server; origin: st
       '/checkout': 'checkout.html',
       '/login': 'login.html',
       '/plain': 'plain.html',
+      // Build 3: the page the executor drives.
+      '/executor': 'executor.html',
     };
     const file = pageFile[pathname];
     if (file) {

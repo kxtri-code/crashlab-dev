@@ -21,6 +21,7 @@ import { summarizeReport } from './report/build.js';
 import { normalizeInputUrl, parseBoolean, parseInteger, parseViewport } from './util/url.js';
 import { TOOL_NAME, TOOL_VERSION } from './version.js';
 import { JOURNEY_USAGE, runJourneyCommand } from './cli/journeyCommand.js';
+import { EXECUTE_USAGE, runExecuteCommand } from './cli/executeCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -48,10 +49,12 @@ Usage:
   npm run scout -- <url> [options]
   npx tsx src/cli.ts scout <url> [options]
   npm run journey -- --goal "<goal>" --scout reports/scout.json
+  npm run execute -- --journey reports/journey.json --confirm-authorized
 
 Commands:
-  scout <url>    Map an authorized page and write a JSON report
+  scout <url>    Map an authorized page and write a JSON report (Build 1)
   journey        Plan a user journey from a goal and a Scout report (Build 2)
+  execute        Attempt a journey plan in a browser (Build 3)
   help           Show this message
   version        Print the build version
 
@@ -291,18 +294,27 @@ function isMainModule(): boolean {
 
 /**
  * Dispatch to the right build command. `scout` keeps its Build 1 behaviour;
- * `journey` is the Build 2 planner.
+ * `journey` is the Build 2 planner; `execute` is the Build 3 executor.
  */
 export async function dispatch(argv: readonly string[]): Promise<number> {
   const first = argv[0];
+  const rest = argv.slice(1);
+  const wantsHelp = (args: readonly string[]) => args.includes('--help') || args.includes('-h');
 
   if (first === 'journey') {
-    const rest = argv.slice(1);
-    if (rest.includes('--help') || rest.includes('-h')) {
+    if (wantsHelp(rest)) {
       console.log(JOURNEY_USAGE);
       return 0;
     }
     return runJourneyCommand(rest);
+  }
+
+  if (first === 'execute') {
+    if (wantsHelp(rest)) {
+      console.log(EXECUTE_USAGE);
+      return 0;
+    }
+    return runExecuteCommand(rest);
   }
 
   return main([...argv]);

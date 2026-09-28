@@ -1,0 +1,1 @@
+Safe test fixture for upload steps. No real data.

@@ -4,15 +4,25 @@ CrashLab is a usage-based autonomous software QA platform. The long-term goal is
 let a developer point it at an authorized web app, describe a goal like *"try to
 complete checkout"*, set a budget, and have it discover failures before real users do.
 
-This repository currently contains two builds:
+This repository currently contains three builds:
 
 - **Build 1 — Scout** (`npm run scout`): opens an authorized page, maps it, captures
   telemetry, and writes a deterministic local JSON report.
 - **Build 2 — Journey Intelligence** (`npm run journey`): turns a natural-language goal
   plus a Scout report into a structured, deterministic journey plan.
+- **Build 3 — Journey Executor** (`npm run execute`): attempts a journey plan in a
+  browser and records what happened, in a separate report.
 
-Build 2 **plans only**. It does not open a browser, click, type, submit, or call any
-external service. Execution is Build 3.
+Each build is a separate artifact:
+
+```
+reports/scout.json      what is on the page          (Build 1)
+reports/journey.json    what should be attempted     (Build 2) - immutable input
+reports/execution.json  what happened when attempted (Build 3)
+```
+
+Build 2 **plans only** and Build 3 **only attempts**. An execution result is not a
+confirmed bug: anomaly detection is Build 4 and reproduction is Build 5.
 
 ---
 
@@ -250,6 +260,253 @@ silently guesses. A low-confidence journey says so.
 A journey plan is **not** a confirmed bug. Build 2 says what to attempt; whether it
 fails, and whether that failure is a real defect, is Build 3 and beyond.
 
+---
+
+## Build 3: Journey Executor
+
+Build 3 answers one question: **"what happened when we attempted this journey?"**
+
+It reads a `journey.json` produced by Build 2, validates it, opens the authorized
+target, attempts each step in order, records every step's result, captures bounded
+raw evidence, and writes a separate `reports/execution.json`.
+
+### Usage
+
+```bash
+# Execute a journey plan
+npm run execute -- \
+  --journey reports/journey.json \
+  --confirm-authorized
+
+# With test data for fill / select / upload steps
+npm run execute -- \
+  --journey reports/journey.json \
+  --data tests/fixtures/executor-test-data.json \
+  --confirm-authorized
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--journey <path>` | `reports/journey.json` | The plan to attempt |
+| `--confirm-authorized` | **required** | Confirm you are authorized to test the target |
+| `--data <path>` | — | JSON test data for `fill` / `select` / `upload` |
+| `-o, --out <path>` | `reports/execution.json` | Execution report path |
+| `--timeout <ms>` | `15000` | Per-step timeout |
+| `--continue-on-failure` | off | Attempt later steps after a failure instead of stopping |
+| `--headed` | off | Run with a visible browser window |
+| `--safe-test-mode` | off | Permit payment-adjacent actions. See the warning below. |
+| `--no-screenshots` | off | Do not capture screenshots |
+
+### Authorization is mandatory
+
+`--confirm-authorized` is required. Without it the executor **does not launch a
+browser, does not navigate, and writes no report** — it prints an explanation and
+exits `1`. This gate is checked *before* the journey plan is even read, so an
+unauthorized invocation cannot touch a target.
+
+Only run CrashLab against applications you own or are explicitly authorized to test,
+and start with staging and local test apps.
+
+### Execution is safe by default
+
+- **No retries.** Every step is attempted exactly once. `executor.retries` is a
+  structural `0`, not a setting.
+- **No reproduction.** A failure is recorded, not re-run.
+- **No anomaly classification.** Evidence is collected raw; interpreting it is
+  Build 4's job.
+- **No bug confirmation.** A failed or blocked step is an observation about this
+  run, not a defect in the product.
+- **Stop on required failure.** Execution halts and remaining steps are marked
+  `skipped`, unless `--continue-on-failure` is given.
+
+### Payment safety
+
+Build 3 cannot tell a sandbox from production, so a `click` or `submit` step that
+looks payment-adjacent (its intent, description, expected outcome or locators
+mention paying, ordering, card, CVV and similar) is **blocked by default**:
+
+```
+step-004  blocked  submit  identify_payment_submission
+      reason=payment-blocked
+```
+
+`--safe-test-mode` permits it. Only use that flag when you are certain the target
+is a test environment, because it removes the last guard before a real charge.
+
+### Supported actions
+
+| Action | Behaviour |
+| --- | --- |
+| `observe` | Resolves the target and records existence, visibility and enabled state. Does not touch the page. |
+| `identify` | Records the selected element. Ambiguity blocks rather than choosing. |
+| `navigate` | Navigates to a URL the plan already represents. Never derives one from free text. |
+| `click` | Clicks a unique, visible, enabled control. Records URL before/after. |
+| `fill` | Types an explicit test value. **Blocks without one.** Never invents a value. |
+| `select` | Selects an explicit option by label. Never picks the first option. |
+| `upload` | Attaches an explicit local fixture inside the allowed directory. |
+| `submit` | Submits through the designated control. Records what happened; draws no conclusion. |
+| `assert` | Checks a target the plan identified is present. Prose is never interpreted. |
+
+### Test data
+
+`fill`, `select` and `upload` require explicit data. A step with no matching entry is
+**blocked** — not guessed, not defaulted, and never filled with an empty string.
+
+```json
+{
+  "element-004": "qa@example.test",
+  "email": "qa@example.test",
+  "password": "SafeFixturePassword123!",
+  "country": "Germany",
+  "file": "tests/fixtures/upload-fixture.txt"
+}
+```
+
+Resolution order:
+
+1. exact target element id (`element-004`)
+2. a semantic key derived from the step intent (`identify_password_field` → `password`)
+3. a stable field `name`, when the caller supplies it
+
+There is deliberately **no blanket fallback** over a generic vocabulary. Handing
+`email` to a country field would type the wrong data into the wrong control, which
+is worse than refusing — an unrecognised intent blocks so you can add a key that
+means something for that field.
+
+Only `.test`, `.invalid` and clearly fake values belong in a test-data file. The
+committed fixture uses fake addresses only. Real credentials go in an untracked
+local file (`test-data.local.json` and `*.test-data.json` are gitignored).
+
+### Locator resolution
+
+A step may only be acted on through a locator the **plan** supplied. The executor:
+
+1. tries `locatorCandidates` in order,
+2. compiles each one — Playwright `getBy*` / `locator(...)` expressions and CSS
+   selectors, read as **literals** so a plan string can never execute code,
+3. requires a unique match,
+4. requires a visible and enabled element for any interactive action,
+5. records which locator was used,
+6. never falls back to an element the planner did not name.
+
+A locator matching several elements **blocks** as `locator-ambiguous` rather than
+picking one, because choosing would make the run depend on document order. A
+locator matching nothing blocks as `locator-not-found`. A form the executor does
+not understand blocks as `locator-unsupported` — it is never half-supported or
+guessed at.
+
+### Execution report
+
+Written to `reports/execution.json`.
+
+```jsonc
+{
+  "schemaVersion": "1.0",
+  "journeyPlanSchemaVersion": "1.0",
+  "journeyReport": "reports/journey.json",
+  "goal": "Try to log in",
+  "journeyType": "login",
+  "target": { "url": "...", "finalUrl": "...", "title": "..." },
+  "status": "aborted",
+  "startedAt": "...", "finishedAt": "...", "durationMs": 1234,
+  "stepCounts": { "total": 5, "passed": 4, "failed": 0, "blocked": 1, "skipped": 0 },
+  "steps": [
+    {
+      "id": "step-002", "order": 2, "intent": "identify_username_field",
+      "action": "identify", "status": "passed",
+      "startedAt": "...", "finishedAt": "...", "durationMs": 9,
+      "selectedLocator": "page.getByRole('textbox', { name: 'username' })",
+      "targetElementIds": ["element-001"],
+      "urlBefore": "...", "urlAfter": "...",
+      "observations": { "exists": true, "visible": true, "enabled": true, "tag": "input", "matchCount": 1 },
+      "evidence": {
+        "screenshot": "step-002-after.png",
+        "consoleEvents": [], "pageErrors": [], "networkEvents": [],
+        "dialogObserved": false, "pageChanged": false
+      },
+      "error": null,
+      "description": "...", "planConfidence": 0.99
+    }
+  ],
+  "rawEvidence": { "consoleEvents": [], "pageErrors": [], "networkEvents": [], "screenshots": [] },
+  "warnings": [], "blockedSteps": ["step-005: unsupported-assertion - ..."],
+  "redaction": { "sensitiveValuesRedacted": true, "redactedValueCount": 1, "dataProvided": true, "dataProvidedKeys": ["password"] },
+  "executor": { "mode": "deterministic", "version": "0.1.0", "retries": 0,
+                "stoppedOnFailure": true, "continueOnFailure": false, "safeTestMode": false }
+}
+```
+
+### Status meanings
+
+| Step status | Meaning |
+| --- | --- |
+| `passed` | The step's action was performed and its observation succeeded |
+| `failed` | The action was attempted and did not succeed |
+| `blocked` | The step could not be attempted safely: no target, ambiguity, hidden, disabled, missing data, payment guard, or an external-origin navigation |
+
+| Overall status | Meaning |
+| --- | --- |
+| `passed` | Every step passed |
+| `partial` | Some steps passed, others blocked, and the run continued |
+| `failed` | A step failed, and the run continued past it |
+| `aborted` | Execution stopped early after a failure |
+
+None of these means a bug. There is no "confirmed bug" status, by design.
+
+### Redaction
+
+Two mechanisms, and the first is the real guarantee:
+
+1. **A value is never recorded.** A `fill` step writes only that a value was
+   supplied and that it was redacted. The report may state a value's length, which
+   is enough to diagnose a wrong test-data entry without disclosing it.
+2. **Page-derived text is scrubbed.** Console messages, page errors, URLs and error
+   strings come from the target and can echo a value back — the login fixture
+   writes the submitted password into the DOM, and that value never reaches the
+   report. Sensitive query values and URL credentials are redacted as well.
+
+No request or response bodies, and no request or response headers, are ever
+captured. The report states `redaction.sensitiveValuesRedacted: true` and lists
+which *keys* were provided, never their values.
+
+### Screenshots and evidence
+
+Screenshots are captured only where useful and are bounded to 40 per run:
+
+`initial.png`, `step-NNN-after.png` (or `step-NNN-failure.png`),
+`final.png`, written to `evidence/`.
+
+The `evidence/` directory is gitignored, because a screenshot shows whatever was on
+the page. Network evidence is metadata only — method, URL, status, resource type,
+duration, third-party flag — never headers or bodies.
+
+### Build 3 does **not** do
+
+- No anomaly detection or failure classification (Build 4)
+- No reproduction or retry loops (Build 5)
+- No AI investigation or provider
+- No bug confirmation or severity scoring
+- No login automation or credential guessing
+- No payment automation, and no payment action without `--safe-test-mode`
+- No penetration testing or security scanning
+- No dashboard, backend, database, or billing
+
+It also never mutates `journey.json`. The plan is an immutable input; the result is
+a new artifact.
+
+### Build 2 compatibility note
+
+Build 2's planner emits only `identify` and `assert` steps. Its "define the expected
+outcome" steps carry no target and a prose `expectedOutcome`, so Build 3 correctly
+blocks them as `unsupported-assertion` — it will not interpret natural language. In
+practice a generated login plan runs its identification steps and then stops on the
+final assertion.
+
+The full nine-action dispatcher is implemented and tested, because a hand-authored
+`journey-plan-v1` document may legitimately contain `click`, `fill`, `submit` and
+the rest. This is a property of the Build 2 planner's output, not a contract change:
+`src/journey/` is unmodified by Build 3.
+
 ## Requirements
 
 - Node.js **20.11+** (Node 22 recommended)
@@ -334,6 +591,20 @@ Journey (`npm run journey -- --goal "<text>"`):
 | `--goal "<text>"` | — | The user goal in natural language (required) |
 | `--scout <path>` | `reports/scout.json` | Path to a Build 1 Scout report |
 | `-o, --out <path>` | `reports/journey.json` | Journey plan output path |
+
+Execute (`npm run execute -- --journey <path> --confirm-authorized`):
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--journey <path>` | `reports/journey.json` | The plan to attempt |
+| `--confirm-authorized` | **required** | Confirm authorization for the target |
+| `--data <path>` | — | JSON test data for `fill` / `select` / `upload` |
+| `-o, --out <path>` | `reports/execution.json` | Execution report path |
+| `--timeout <ms>` | `15000` | Per-step timeout |
+| `--continue-on-failure` | off | Continue after a failure |
+| `--headed` | off | Visible browser window |
+| `--safe-test-mode` | off | Permit payment-adjacent actions |
+| `--no-screenshots` | off | Skip screenshots |
 
 ### Configuration
 
@@ -467,6 +738,7 @@ src/
   cli/
     args.ts           shared flag scanner (--flag value and --flag=value)
     journeyCommand.ts the Build 2 `journey` command
+    executeCommand.ts the Build 3 `execute` command
   scout/              Build 1 - browser-backed
     types.ts          the Scout report contract
     browser.ts        Chromium launch and teardown
@@ -485,6 +757,17 @@ src/
     confidence.ts     PURE: evidence -> 0..1 confidence
     plan.ts           PURE: composition into ordered steps + diagnostics
     report.ts         plan persistence + terminal summary
+  executor/           Build 3 - only executor.ts and the action handlers
+    types.ts               the execution report contract
+    planValidator.ts       PURE: plan loading and contract validation
+    testData.ts            PURE: test-data resolution and fixture-path limits
+    redaction.ts           PURE: scrubbing and redacted value summaries
+    locatorResolver.ts     plan locator strings -> Playwright locators
+    executionContext.ts    per-step budget, origin and payment guards
+    actionDispatcher.ts    the nine actions
+    evidence.ts            evidence capture, reusing Build 1 recorders
+    executionReport.ts     PURE: report assembly + terminal summary
+    executor.ts            the one place a browser is launched
   report/
     build.ts          PURE: Scout report assembly + terminal summary
     write.ts          shared JSON persistence
@@ -506,6 +789,11 @@ Build 2 extends the rule: **the whole of `src/journey/` is pure.** It imports no
 Playwright, opens no browser, and makes no network call, so the planner can run in a
 CI job or a backend process. The only I/O is reading the Scout report and writing the
 plan, both in the CLI command.
+
+Build 3 keeps that separation in both directions: `src/journey/` still imports no
+Playwright, and Build 3 adds no planning logic. Validation, test-data resolution and
+redaction are pure and unit-testable; only `executor.ts` and the action handlers
+touch a browser, and they act solely on locators the plan supplied.
 
 ### One trap worth knowing about
 
@@ -580,12 +868,31 @@ provider, key, or network surface attached to Build 2.
   controls shows only the first three. Warnings report when a tie was detected.
 - A journey plan is **not** a finding. Nothing here says whether a flow is broken.
 
+### Build 3 (Journey Executor)
+
+- The payment guard is a text check on the plan's own wording, not an
+  understanding of the target. A payment flow that avoids that vocabulary is not
+  caught by it, which is why `--safe-test-mode` should be used only knowingly.
+- Locator support covers the forms Build 2 emits plus plain CSS. A hand-written
+  plan using chained or `nth()` locators is refused as unsupported rather than
+  half-executed.
+- `assert` only checks presence. A Build 2 step whose expected outcome is prose is
+  blocked, so generated plans usually stop on their final assertion.
+- Test-data resolution requires a semantic key or an element id. There is no
+  blanket fallback, so a step with an unrecognised intent needs an explicit key.
+- The executor does not verify the page still matches the Scout report. A stale
+  plan executes against whatever is now at that URL.
+- Screenshots are captured unredacted. A page showing a value at the moment of
+  capture will show it in the PNG; redaction applies to the JSON report.
+- A single run is a single sample. Nothing here distinguishes a flaky step from a
+  consistently broken one — that requires Build 5.
+
 ## Next build
 
-**Build 3: Journey Executor** — take a journey plan and execute it deterministically
-in Playwright, with a Reproducer that reruns suspicious steps to confirm real
-failures, and an Anomaly Engine that flags HTTP errors, JS exceptions, unexpected
-redirects, timeouts, and broken UI state. Not started.
+**Build 4: Anomaly Engine** — read the raw evidence in `execution.json` and
+classify it: HTTP errors, duplicate requests, JavaScript exceptions, unexpected
+redirects, timeouts, and broken UI state, reported as observations about the run
+rather than confirmed bugs. Not started.
 
-A journey plan is not a confirmed bug. Execution and reproduction are what turn a plan
-into evidence.
+Reproduction belongs to Build 5. A failed execution is not automatically a product
+bug, and a single observation is not yet evidence of anything.

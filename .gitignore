@@ -4,6 +4,14 @@ dist/
 # Reports are per-run and may contain target URLs.
 reports/*.json
 
+# Build 3 evidence: screenshots can show whatever was on the page.
+evidence/
+
+# Local test data may hold real test credentials. Only the committed fake
+# fixture is tracked.
+test-data.local.json
+*.test-data.json
+
 # Static fixtures are inputs, not output, and must stay tracked.
 !tests/fixtures/*.json
 

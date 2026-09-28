@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Executor Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Executor fixture</h1>
+
+      <!-- 1. a plain clickable button -->
+      <button type="button" id="simple-button" data-testid="simple-button">Press me</button>
+      <p id="click-result">not pressed</p>
+
+      <!-- 2. a text input for explicit test data -->
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" data-testid="username" />
+
+      <!-- 3. a select control -->
+      <label for="country">Country</label>
+      <select id="country" name="country" data-testid="country">
+        <option value="">Choose</option>
+        <option value="de">Germany</option>
+        <option value="nl">Netherlands</option>
+      </select>
+
+      <!-- 4. a form with a submission control -->
+      <form id="signup-form" action="/submitted" method="get">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" data-testid="email" />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" data-testid="password" />
+        <button type="submit" id="submit-signup" data-testid="submit-signup">Create account</button>
+      </form>
+      <p id="submit-result">not submitted</p>
+
+      <!-- 5. two identical buttons, for ambiguity -->
+      <button type="button" class="dup" data-testid="dup-a">Duplicate</button>
+      <button type="button" class="dup" data-testid="dup-b">Duplicate</button>
+
+      <!-- 6. a hidden control -->
+      <button type="button" id="hidden-button" data-testid="hidden-button" style="display: none">Hidden</button>
+
+      <!-- 7. a disabled control -->
+      <button type="button" id="disabled-button" data-testid="disabled-button" disabled>Disabled</button>
+
+      <!-- 8. a file input for upload -->
+      <label for="document">Document</label>
+      <input id="document" name="document" type="file" data-testid="document" />
+
+      <!-- 9. a payment-adjacent control -->
+      <button type="button" id="pay-now" data-testid="pay-now">Pay now</button>
+
+      <!-- 10. a link that leaves the origin, for the origin guard -->
+      <a id="external-link" href="https://example.invalid/elsewhere" data-testid="external-link">External</a>
+    </main>
+
+    <script>
+      // Deterministic telemetry for evidence assertions.
+      console.warn('fixture: executor page loaded');
+      console.error('fixture: simulated console error');
+      setTimeout(function () {
+        throw new Error('fixture: uncaught executor failure');
+      }, 10);
+      fetch('/api/probe');
+
+      // Behaviour the executor drives.
+      document.getElementById('simple-button').addEventListener('click', function () {
+        document.getElementById('click-result').textContent = 'pressed';
+      });
+      document.getElementById('signup-form').addEventListener('submit', function (event) {
+        event.preventDefault();
+        // Echo the password back into the page, to prove the executor scrubs a
+        // value that a target application reflects back at us.
+        var password = document.getElementById('password').value;
+        document.getElementById('submit-result').textContent = 'submitted:' + password;
+        history.pushState({}, '', '/submitted');
+      });
+    </script>
+  </body>
+</html>

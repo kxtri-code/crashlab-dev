@@ -66,3 +66,46 @@ export type {
 
 export * from './scout/types.js';
 export { BROWSER_NAME, REPORT_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION } from './version.js';
+
+// --- Build 3: Journey Executor ----------------------------------------------
+// Validation, test-data resolution and redaction are pure. Only `executor.ts`
+// and the action handlers touch Playwright, and they act solely on locators the
+// journey plan supplied.
+
+export { loadJourneyPlan, validateJourneyPlan, SUPPORTED_ACTIONS } from './executor/planValidator.js';
+export { loadTestData, resolveValue, semanticKeysForIntent, resolveFixturePath } from './executor/testData.js';
+export { collectSecrets, createScrubber, isSensitiveTestDataKey, redactExecutionUrl, redactMessage, summarizeValue, NO_SECRETS, REDACTED } from './executor/redaction.js';
+export {
+  compilePlanLocator,
+  compileLocatorExpression,
+  isCssSelector,
+  isPlaywrightLocatorExpression,
+  observeLocator,
+  resolveStepTarget,
+} from './executor/locatorResolver.js';
+export type { LocatorResolution, ResolutionIntent } from './executor/locatorResolver.js';
+export { dispatchAction, supportsAction } from './executor/actionDispatcher.js';
+export { executeJourney, DEFAULT_STEP_TIMEOUT_MS } from './executor/executor.js';
+export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
+export { ExecutionContext } from './executor/executionContext.js';
+export type { ActionOutcome } from './executor/types.js';
+export {
+  EXECUTION_SCHEMA_VERSION,
+  SUPPORTED_JOURNEY_SCHEMA_VERSIONS,
+  ExecutionRefused,
+  JourneyPlanError,
+} from './executor/types.js';
+export type {
+  ExecutionOptions,
+  ExecutionReport,
+  ExecutionStatus,
+  BlockReason,
+  StepExecutionResult,
+  StepObservations,
+  StepEvidence,
+  RawEvidence,
+  RedactionSummary,
+  EvidenceConsoleEvent,
+  EvidenceNetworkEvent,
+  EvidencePageError,
+} from './executor/types.js';

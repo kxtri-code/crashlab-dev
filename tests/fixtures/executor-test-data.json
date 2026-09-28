@@ -1,0 +1,8 @@
+{
+  "username": "qa-user@example.test",
+  "email": "qa-user@example.test",
+  "password": "SafeFixturePassword123!",
+  "confirmPassword": "SafeFixturePassword123!",
+  "country": "Germany",
+  "file": "tests/fixtures/upload-fixture.txt"
+}
