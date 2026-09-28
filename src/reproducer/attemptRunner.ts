@@ -14,6 +14,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { executeJourney } from '../executor/executor.js';
 import { buildAnomalyReport } from '../anomaly/report.js';
+import { toEnvironmentReference } from '../provenance/reportMetadata.js';
 import type { AnomalyReport } from '../anomaly/report.js';
 import type { ReproductionInput, ReproductionRun, AttemptStatus } from './types.js';
 
@@ -63,6 +64,10 @@ export async function runAttempt(input: ReproductionInput, attempt: number): Pro
       // data enters the page, capture stops.
       screenshots: true,
       evidenceDir: join(paths.dir, 'evidence'),
+      // Build 5.1: the caller-declared environment identity is forwarded so
+      // every attempt records the same declared provenance.
+      provenance: input.provenance,
+      testDataFixtureHashSource: input.testDataFixtureHashSource,
     });
   } catch (error) {
     // The executor could not run at all - a browser failure, a target that
@@ -74,6 +79,10 @@ export async function runAttempt(input: ReproductionInput, attempt: number): Pro
       anomalyReport: paths.anomalies,
       status: 'failed',
       detail: (error as Error).message.slice(0, 200),
+      // An attempt that never launched a browser has no environment to record.
+      environmentFingerprint: null,
+      environmentId: null,
+      applicationBuildId: null,
       // Minimal placeholders so matching and the report builder have a shape.
       execution: emptyExecution(input),
       anomalies: emptyAnomalies(input),
@@ -114,6 +123,11 @@ export async function runAttempt(input: ReproductionInput, attempt: number): Pro
       refusedSteps > 0
         ? `${refusedSteps} step(s) were refused by an executor guard; the attempt still completed.`
         : null,
+    // Build 5.1: read back from the execution report the executor produced, so
+    // the recorded fingerprint is the one that actually ran.
+    environmentFingerprint: execution.environment?.fingerprint ?? null,
+    environmentId: execution.environment?.application.environmentId ?? null,
+    applicationBuildId: execution.environment?.application.buildId ?? null,
     execution,
     anomalies: anomalyReport,
   };
@@ -153,6 +167,9 @@ function emptyExecution(input: ReproductionInput) {
       continueOnFailure: false,
       safeTestMode: true,
     },
+    // An attempt that never launched a browser has no environment to record.
+    // Null reads as "unknown" downstream, which is the honest answer.
+    environment: null,
   };
 }
 
@@ -181,6 +198,8 @@ function emptyAnomalies(input: ReproductionInput): AnomalyReport {
     anomalies: [],
     warnings: [],
     analyzer: { mode: 'deterministic', version: '0.1.0' },
+    // An attempt that never ran has no environment to reference.
+    environment: toEnvironmentReference(null),
     interpretation: {
       confirmedBug: false as const,
       requiresInvestigation: false,

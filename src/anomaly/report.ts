@@ -13,6 +13,8 @@ import { writeReport } from '../report/write.js';
 import type { Anomaly, AnomalyAnalysisInput, AnomalyAnalysisOptions, AnomalySummary, Interpretation } from './types.js';
 import { ANOMALY_SCHEMA_VERSION, RULE_IDS } from './types.js';
 import { classifySignals } from './classifier.js';
+import { toEnvironmentReference } from '../provenance/reportMetadata.js';
+import type { EnvironmentReference } from '../provenance/types.js';
 import { TOOL_VERSION } from '../version.js';
 
 /** Default anomaly report path. */
@@ -46,6 +48,12 @@ export function summarizeAnomalies(anomalies: readonly Anomaly[]): AnomalySummar
 function analysisWarnings(input: AnomalyAnalysisInput): string[] {
   const warnings: string[] = [];
   const raw = input.execution.rawEvidence;
+
+  // Build 5.1: provenance is a first-class output, and its absence is stated
+  // rather than papered over. A legacy execution report has no environment.
+  if (input.execution.environment === null || input.execution.environment === undefined) {
+    warnings.push('Environment provenance is unavailable for this execution report.');
+  }
 
   if (!raw || typeof raw !== 'object') {
     warnings.push('The execution report contains no rawEvidence block; no evidence-based rules could run.');
@@ -88,6 +96,7 @@ export function buildAnomalyReport(
   anomalies: Anomaly[];
   warnings: string[];
   analyzer: { mode: 'deterministic'; version: string };
+  environment: EnvironmentReference;
   interpretation: Interpretation;
 } {
   const anomalies = classifySignals({
@@ -115,6 +124,9 @@ export function buildAnomalyReport(
     anomalies,
     warnings: analysisWarnings(input),
     analyzer: { mode: 'deterministic', version: TOOL_VERSION },
+    // Build 5.1: a reference to the environment that produced these signals,
+    // so a reader can tell which execution this classification came from.
+    environment: toEnvironmentReference(input.execution.environment),
     interpretation,
   };
 }

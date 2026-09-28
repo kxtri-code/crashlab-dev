@@ -25,7 +25,11 @@ import { loadTestData } from '../executor/testData.js';
 import { executeJourney, DEFAULT_STEP_TIMEOUT_MS } from '../executor/executor.js';
 import { summarizeExecution } from '../executor/executionReport.js';
 import { ExecutionRefused, JourneyPlanError } from '../executor/types.js';
+import { ANOMALY_USAGE, runAnomalyCommand } from './anomalyCommand.js';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
+import { sanitizeAppBuildId, sanitizeDataId, sanitizeEnvironmentId } from '../provenance/redaction.js';
+import { readFile } from 'node:fs/promises';
+import type { ProvenanceInput } from '../provenance/types.js';
 
 /** Default journey plan input path. */
 export const DEFAULT_JOURNEY_INPUT_PATH = 'reports/journey.json';
@@ -45,6 +49,11 @@ export const EXECUTE_FLAGS = [
   '--headed',
   '--confirm-authorized',
   '--no-screenshots',
+  // Build 5.1 provenance. All optional and safe-identifiers only.
+  '--environment-id',
+  '--app-build-id',
+  '--data-id',
+  '--hash-test-data',
 ] as const;
 
 /** Parsed `execute` arguments. Pure, so it is unit-testable. */
@@ -63,6 +72,10 @@ export interface ParsedExecuteArgs {
    */
   safeTestMode: boolean;
   screenshots: boolean;
+  /** Build 5.1 provenance: optional, safe identifiers only. */
+  provenance: ProvenanceInput;
+  /** Read the test-data file's bytes so its hash can be recorded. */
+  hashTestData: boolean;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -81,6 +94,8 @@ export function parseExecuteArgs(argv: readonly string[]): ParsedExecuteArgs {
     confirmAuthorized: false,
     safeTestMode: false,
     screenshots: true,
+    provenance: {},
+    hashTestData: false,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter((flag) => !(EXECUTE_FLAGS as readonly string[]).includes(flag)),
@@ -132,8 +147,28 @@ export function parseExecuteArgs(argv: readonly string[]): ParsedExecuteArgs {
   // Safe test mode cannot be turned off, so it is not a parsed flag.
   parsed.safeTestMode = true;
   parsed.screenshots = !scan.flags.has('--no-screenshots');
+  parsed.hashTestData = scan.flags.has('--hash-test-data');
+
+  // Build 5.1 provenance identifiers. Validated here so an unsafe value is
+  // refused before any browser opens, and sanitized exactly once.
+  try {
+    parsed.provenance = {
+      environmentId: sanitizeEnvironmentId(readProvenanceFlag(scan, '--environment-id')),
+      appBuildId: sanitizeAppBuildId(readProvenanceFlag(scan, '--app-build-id')),
+      dataId: sanitizeDataId(readProvenanceFlag(scan, '--data-id')),
+      hashTestData: parsed.hashTestData,
+    };
+  } catch (error) {
+    parsed.error = (error as Error).message;
+    parsed.valid = false;
+  }
 
   return parsed;
+}
+
+/** Read a provenance flag's raw value, or `null` when absent. */
+function readProvenanceFlag(scan: ReturnType<typeof scanArgs>, flag: string): string | null {
+  return flagValue(scan, [flag]).value;
 }
 
 /** Prefer a repo-relative path in terminal output. */
@@ -161,6 +196,14 @@ Options:
   --continue-on-failure       Attempt later steps after a failure instead of stopping
   --headed                    Run with a visible browser window
   --no-screenshots            Do not capture screenshots
+
+Provenance (Build 5.1, all optional):
+  --environment-id <id>        Short safe id for this environment
+  --app-build-id <id>          Short safe application build id
+  --data-id <id>               Short safe test-data fixture id
+  --hash-test-data             Also record a SHA-256 of the fixture file.
+                               Opt-in: a hash marks identity, it does not
+                               protect a secret.
 
 Safe test mode is always on and cannot be disabled: payment-adjacent actions
 are blocked before any browser interaction, and no live payment path exists.
@@ -236,10 +279,16 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
   console.log(`Target:  ${plan.target.url}`);
   if (args.dataPath) console.log(`Test data: ${args.dataPath} (${Object.keys(testData ?? {}).length} key(s), values never logged)`);
   console.log('Safe test mode: ON (payment actions are blocked; this cannot be disabled)');
+  if (args.provenance.environmentId) console.log(`Environment ID: ${args.provenance.environmentId}`);
+  if (args.provenance.appBuildId) console.log(`Application build: ${args.provenance.appBuildId}`);
   console.log('Executing journey steps...');
 
   let report;
   try {
+    // Build 5.1: read the fixture bytes only when a hash was requested, so the
+    // default path never holds test-data contents in memory or on disk.
+    const testDataFixtureHashSource = args.hashTestData && args.dataPath ? await readFile(args.dataPath) : undefined;
+
     report = await executeJourney({
       plan,
       planPath: args.journeyPath,
@@ -250,6 +299,8 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
       safeTestMode: args.safeTestMode,
       screenshots: args.screenshots,
       evidenceDir,
+      provenance: args.provenance,
+      testDataFixtureHashSource,
     });
   } catch (error) {
     console.error('');

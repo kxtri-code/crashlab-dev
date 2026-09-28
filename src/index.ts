@@ -156,6 +156,54 @@ export {
 } from './anomaly/report.js';
 export type { AnomalyReport } from './anomaly/report.js';
 
+// --- Build 5.1: Environment Provenance --------------------------------------
+// Pure. No browser, no network, no inspection of the target. Fingerprinting
+// and comparison are testable without Playwright.
+
+export { PROVENANCE_SCHEMA_VERSION, MAX_IDENTIFIER_LENGTH, UnsafeIdentifierError } from './provenance/types.js';
+export type {
+  EnvironmentProvenance,
+  EnvironmentReference,
+  EnvironmentComparison,
+  EnvironmentComparisonResult,
+  ProvenanceInput,
+  FingerprintInput,
+  RuntimeProvenance,
+  BrowserProvenance,
+  ConfigurationProvenance,
+  SourceProvenance,
+  ApplicationProvenance,
+  TestDataProvenance,
+  TargetProvenance,
+} from './provenance/types.js';
+export {
+  sanitizeIdentifier,
+  sanitizeEnvironmentId,
+  sanitizeAppBuildId,
+  sanitizeDataId,
+  safeTargetOrigin,
+  safeVersion,
+} from './provenance/redaction.js';
+export {
+  computeFingerprint,
+  canonicalizeFingerprintInputs,
+  fingerprintPayload,
+  nodeMajorMinor,
+  hashFixture,
+  FINGERPRINT_FIELDS,
+} from './provenance/fingerprint.js';
+export { compareEnvironments, describeComparison } from './provenance/comparison.js';
+export type { AttemptEnvironment, OriginalEnvironment } from './provenance/comparison.js';
+export {
+  buildEnvironmentProvenance,
+  collectRuntimeProvenance,
+  collectPlaywrightVersion,
+  hashTestDataFixture,
+  toEnvironmentReference,
+  provenanceFromReport,
+} from './provenance/reportMetadata.js';
+export type { ProvenanceFacts } from './provenance/reportMetadata.js';
+
 // --- Build 5: Controlled Reproducer ---------------------------------------
 // Matching, eligibility and classification are pure. Only `attemptRunner.ts`
 // reaches the browser, and it does so by calling the existing Build 3 executor

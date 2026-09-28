@@ -108,6 +108,7 @@ async function buildPipeline(path = '/checkout', goal = 'Try to complete checkou
       continueOnFailure: false,
       safeTestMode: true,
     },
+    environment: null,
   };
 
   const anomalies = buildAnomalyReport({

@@ -20,6 +20,7 @@ import type {
   StepExecutionResult,
 } from './types.js';
 import { EXECUTION_SCHEMA_VERSION } from './types.js';
+import type { EnvironmentProvenance } from '../provenance/types.js';
 import { TOOL_VERSION } from '../version.js';
 
 /** Tally per-step statuses. */
@@ -58,6 +59,12 @@ export function buildExecutionReport(input: {
   steps: StepExecutionResult[];
   rawEvidence: RawEvidence;
   redaction: RedactionSummary;
+  /**
+   * Build 5.1 provenance. Optional at the builder boundary so a legacy caller
+   * that predates provenance still assembles; it records `null`, which
+   * downstream reads as "unknown" rather than inventing an environment.
+   */
+  environment?: EnvironmentProvenance | null;
   startedAt: string;
   finishedAt: string;
   durationMs: number;
@@ -91,6 +98,10 @@ export function buildExecutionReport(input: {
     warnings: [...new Set(input.warnings)],
     blockedSteps,
     redaction: input.redaction,
+    // Provenance is carried through unchanged; a legacy caller that omits it
+    // records `null`, which downstream reads as "unknown" rather than
+    // inventing an environment.
+    environment: input.environment ?? null,
     executor: {
       mode: 'deterministic',
       version: TOOL_VERSION,

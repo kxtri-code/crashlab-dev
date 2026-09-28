@@ -11,6 +11,7 @@ import type { AnomalyReport } from '../../src/anomaly/report.js';
 import type { JourneyPlan } from '../../src/journey/types.js';
 import type { ExecutionReport, StepExecutionResult } from '../../src/executor/types.js';
 import type { ReproductionRun } from '../../src/reproducer/types.js';
+import { toEnvironmentReference } from '../../src/provenance/reportMetadata.js';
 import { execStep, execution, journey, netEvent, stepError } from './executionReports.js';
 
 /** A signal with sensible defaults, so a fixture states only what it tests. */
@@ -56,6 +57,9 @@ export function anomalyReport(signals: Anomaly[], overrides: Partial<AnomalyRepo
     anomalies: signals,
     warnings: [],
     analyzer: { mode: 'deterministic', version: '0.1.0' },
+    // A fixture carries no provenance unless it says so, which is also the
+    // legacy-report case the compatibility tests exercise.
+    environment: toEnvironmentReference(null),
     interpretation: {
       confirmedBug: false,
       requiresInvestigation: signals.length > 0,
@@ -203,6 +207,9 @@ export function attempt(attemptNumber: number, signals: Anomaly[] = []): Reprodu
     anomalyReport: `reports/reproduction/attempt-${String(attemptNumber).padStart(3, '0')}/anomalies.json`,
     status: 'completed',
     detail: null,
+    environmentFingerprint: null,
+    environmentId: null,
+    applicationBuildId: null,
     execution: execution(),
     anomalies: anomalyReport(signals, { executionStatus: 'passed' }),
   };

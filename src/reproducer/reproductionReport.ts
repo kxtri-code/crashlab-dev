@@ -21,7 +21,11 @@ import type {
   ReproductionResult,
   ReproductionRun,
   ReproductionSummary,
+  AttemptEnvironmentReference,
+  EnvironmentComparisonSummary,
+  OriginalEnvironmentReference,
 } from './types.js';
+import { compareEnvironments, describeComparison } from '../provenance/comparison.js';
 import { REPRODUCTION_SCHEMA_VERSION } from './types.js';
 
 /** Default reproduction report path. */
@@ -61,6 +65,25 @@ export function buildResults(input: ReproductionInput, attempts: readonly Reprod
   const { eligible, ineligible } = partitionEligible(input.anomalies.anomalies, input.includePossiblyExpected);
   const completedAttempts = attempts.filter((run) => run.status === 'completed').length;
 
+  // Build 5.1: where the original signal was observed. Taken from the anomaly
+  // report's own provenance reference, so it follows the artifacts rather than
+  // being reconstructed.
+  const originalEnvironment = readOriginalEnvironment(input);
+  const attemptEnvironments: AttemptEnvironmentReference[] = attempts.map((run) => ({
+    attempt: run.attempt,
+    fingerprint: run.environmentFingerprint,
+    environmentId: run.environmentId,
+    applicationBuildId: run.applicationBuildId,
+  }));
+  // The same comparison applies to every result: they share one run's attempts.
+  const comparison = compareEnvironments(originalEnvironment, attemptEnvironments);
+  const environmentComparison: EnvironmentComparisonSummary = {
+    classification: comparison.classification,
+    differences: comparison.differences,
+    unknownReason: comparison.unknownReason,
+    interpretation: describeComparison(comparison.classification, comparison.differences),
+  };
+
   const results: ReproductionResult[] = [];
 
   // Ineligible signals first, so the output mirrors the input's own ordering
@@ -82,6 +105,9 @@ export function buildResults(input: ReproductionInput, attempts: readonly Reprod
       reason: entry.reason.detail,
       ineligibleBecause: entry.reason,
       requiresInvestigation: false,
+      originalEnvironment,
+      attemptEnvironments,
+      environmentComparison,
     });
   }
 
@@ -114,10 +140,30 @@ export function buildResults(input: ReproductionInput, attempts: readonly Reprod
       ineligibleBecause: null,
       // A reproducible signal is a lead for a human, not a verdict.
       requiresInvestigation: outcome.classification === 'reproduced',
+      // Build 5.1: context only. This never changes `classification` above.
+      originalEnvironment,
+      attemptEnvironments,
+      environmentComparison,
     });
   }
 
   return results;
+}
+
+/**
+ * Read where the original signal was observed, from the anomaly report.
+ *
+ * A legacy anomaly report has no environment reference, which reads as `null`
+ * and yields an `unknown` comparison rather than an invented one.
+ */
+function readOriginalEnvironment(input: ReproductionInput): OriginalEnvironmentReference | null {
+  const reference = input.anomalies.environment;
+  if (!reference || reference.fingerprint === null) return null;
+  return {
+    fingerprint: reference.fingerprint,
+    environmentId: reference.environmentId,
+    applicationBuildId: reference.applicationBuildId,
+  };
 }
 
 /** Assemble the full report. Pure. */
@@ -136,13 +182,15 @@ export function buildReproductionReport(input: ReproductionInput, attempts: read
     summary: summarizeResults(results),
     // The in-memory execution and anomaly reports are deliberately not copied
     // into this file; the paths above point at them instead.
-    runs: attempts.map(({ attempt, name, executionReport, anomalyReport, status, detail }) => ({
+    runs: attempts.map(({ attempt, name, executionReport, anomalyReport, status, detail, environmentFingerprint, environmentId, applicationBuildId }) => ({
       attempt,
       name,
       executionReport,
       anomalyReport,
       status,
       detail,
+      // Build 5.1: each attempt's recorded environment.
+      environment: { fingerprint: environmentFingerprint, environmentId, applicationBuildId },
     })),
     results,
     safety: {

@@ -19,6 +19,7 @@ import type { ExecutionReport } from '../executor/types.js';
 import type { JourneyPlan } from '../journey/types.js';
 import type { Anomaly } from '../anomaly/types.js';
 import type { AnomalyReport } from '../anomaly/report.js';
+import type { ProvenanceInput } from '../provenance/types.js';
 
 /** Reproduction report schema version. */
 export const REPRODUCTION_SCHEMA_VERSION = '1.0';
@@ -76,6 +77,10 @@ export interface ReproductionRun {
   status: AttemptStatus;
   /** Why the attempt was blocked or failed, when it was. */
   detail: string | null;
+  /** Build 5.1: this attempt's recorded environment fingerprint. */
+  environmentFingerprint: string | null;
+  environmentId: string | null;
+  applicationBuildId: string | null;
   /** The execution report, in memory, for matching. Not serialized into the report. */
   execution: ExecutionReport;
   /** The anomaly report for this attempt, in memory, for matching. */
@@ -89,6 +94,38 @@ export interface ReproductionEvidence {
   anomalyReport: string;
   /** The anomaly id within that attempt's own report. */
   anomalyId: string | null;
+}
+
+/** One attempt's environment, as recorded by that attempt's execution report. */
+export interface AttemptEnvironmentReference {
+  attempt: number;
+  fingerprint: string | null;
+  environmentId: string | null;
+  applicationBuildId: string | null;
+}
+
+/** Where a signal was first observed. */
+export interface OriginalEnvironmentReference {
+  fingerprint: string | null;
+  environmentId: string | null;
+  applicationBuildId: string | null;
+}
+
+/**
+ * How the reruns relate to the original environment.
+ *
+ * This is **context, never a verdict**. A signal that reproduces across
+ * different environments is still `reproduced`; letting provenance overturn the
+ * classification would make the two verdicts contradict each other.
+ */
+export interface EnvironmentComparisonSummary {
+  classification: 'same' | 'different' | 'unknown';
+  /** Fingerprint input names that differ. */
+  differences: string[];
+  /** Why no comparison was possible, when unknown. */
+  unknownReason: string | null;
+  /** Deterministic, factual wording. */
+  interpretation: string;
 }
 
 /** The verdict for one original signal. */
@@ -120,6 +157,12 @@ export interface ReproductionResult {
   ineligibleBecause: IneligibilityReason | null;
   /** True for a reproducible signal, which is a candidate, not a bug. */
   requiresInvestigation: boolean;
+  /** Where the signal was first observed. Null when unknown. */
+  originalEnvironment: OriginalEnvironmentReference | null;
+  /** Each attempt's recorded environment, in order. */
+  attemptEnvironments: AttemptEnvironmentReference[];
+  /** How the rerun environments relate to the original. */
+  environmentComparison: EnvironmentComparisonSummary;
 }
 
 /** Counts per classification. */
@@ -146,8 +189,7 @@ export interface SafetySummary {
 }
 
 /** How the run was performed. */
-export interface ReproducerMeta {
-  mode: 'controlled-deterministic';
+export interface ReproducerMeta {  mode: 'controlled-deterministic';
   version: string;
   /**
    * Always false. The attempts here are *declared reproduction attempts* under
@@ -169,6 +211,22 @@ export interface ReproductionInterpretation {
   note: string;
 }
 
+/** A run as it appears in the report: the artifact references, not the payloads. */
+export interface ReproductionRunSummary {
+  attempt: number;
+  name: string;
+  executionReport: string;
+  anomalyReport: string;
+  status: AttemptStatus;
+  detail: string | null;
+  /** Build 5.1: this attempt's recorded environment. */
+  environment: {
+    fingerprint: string | null;
+    environmentId: string | null;
+    applicationBuildId: string | null;
+  };
+}
+
 /** The report written to `reports/reproduction.json`. */
 export interface ReproductionReport {
   schemaVersion: string;
@@ -177,7 +235,7 @@ export interface ReproductionReport {
   executionReport: string | null;
   goal: string;
   summary: ReproductionSummary;
-  runs: Array<Omit<ReproductionRun, 'execution' | 'anomalies'>>;
+  runs: ReproductionRunSummary[];
   results: ReproductionResult[];
   safety: SafetySummary;
   reproducer: ReproducerMeta;
@@ -212,6 +270,13 @@ export interface ReproductionInput {
   headed?: boolean;
   /** Directory the rerun artifacts are written under. */
   outputDir: string;
+  /**
+   * Build 5.1 provenance, forwarded to every attempt so a rerun records the
+   * same environment identity the caller declared.
+   */
+  provenance?: ProvenanceInput;
+  /** Test-data fixture bytes, hashed only when `provenance.hashTestData` is set. */
+  testDataFixtureHashSource?: Uint8Array;
 }
 
 /** A validation failure that must stop before any browser opens. */

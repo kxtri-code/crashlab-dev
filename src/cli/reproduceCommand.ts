@@ -33,6 +33,10 @@ import {
   writeReproductionReport,
 } from '../reproducer/reproductionReport.js';
 import { MAX_ATTEMPTS, MIN_ATTEMPTS, DEFAULT_ATTEMPTS, ReproductionInputError } from '../reproducer/types.js';
+import { DEFAULT_EXECUTION_INPUT_PATH, DEFAULT_JOURNEY_INPUT_PATH } from './anomalyCommand.js';
+import { sanitizeAppBuildId, sanitizeDataId, sanitizeEnvironmentId } from '../provenance/redaction.js';
+import type { ProvenanceInput } from '../provenance/types.js';
+import { readFile } from 'node:fs/promises';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 
 /** Default artifact directory for rerun reports. */
@@ -51,6 +55,11 @@ export const REPRODUCE_FLAGS = [
   '--headed',
   '--include-possibly-expected',
   '--confirm-authorized',
+  // Build 5.1 provenance. All optional and safe-identifiers only.
+  '--environment-id',
+  '--app-build-id',
+  '--data-id',
+  '--hash-test-data',
 ] as const;
 
 /** Parsed `reproduce` arguments. Pure, so it is unit-testable. */
@@ -65,6 +74,10 @@ export interface ParsedReproduceArgs {
   includePossiblyExpected: boolean;
   /** The safety gate. Absent means the run is refused. */
   confirmAuthorized: boolean;
+  /** Build 5.1 provenance: optional, safe identifiers only. */
+  provenance: ProvenanceInput;
+  /** Read the test-data file's bytes so its hash can be recorded. */
+  hashTestData: boolean;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -75,7 +88,7 @@ export function parseReproduceArgs(argv: readonly string[]): ParsedReproduceArgs
   const scan = scanArgs(argv);
   const parsed: ParsedReproduceArgs = {
     anomalyPath: process.env.CRASHLAB_ANOMALY_INPUT?.trim() || 'reports/anomalies.json',
-    journeyPath: process.env.CRASHLAB_JOURNEY_INPUT?.trim() || 'reports/journey.json',
+    journeyPath: process.env.CRASHLAB_JOURNEY_INPUT?.trim() || DEFAULT_JOURNEY_INPUT_PATH,
     dataPath: null,
     outputPath: process.env.CRASHLAB_REPRODUCTION_OUTPUT?.trim() || DEFAULT_REPRODUCTION_OUTPUT_PATH,
     attempts: DEFAULT_ATTEMPTS,
@@ -83,6 +96,8 @@ export function parseReproduceArgs(argv: readonly string[]): ParsedReproduceArgs
     headed: false,
     includePossiblyExpected: false,
     confirmAuthorized: false,
+    provenance: {},
+    hashTestData: false,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter((flag) => !(REPRODUCE_FLAGS as readonly string[]).includes(flag)),
@@ -150,6 +165,20 @@ export function parseReproduceArgs(argv: readonly string[]): ParsedReproduceArgs
   parsed.headed = scan.flags.has('--headed');
   parsed.includePossiblyExpected = scan.flags.has('--include-possibly-expected');
   parsed.confirmAuthorized = scan.flags.has('--confirm-authorized');
+  parsed.hashTestData = scan.flags.has('--hash-test-data');
+
+  // Build 5.1 provenance identifiers, validated before any browser opens.
+  try {
+    parsed.provenance = {
+      environmentId: sanitizeEnvironmentId(flagValue(scan, ['--environment-id']).value),
+      appBuildId: sanitizeAppBuildId(flagValue(scan, ['--app-build-id']).value),
+      dataId: sanitizeDataId(flagValue(scan, ['--data-id']).value),
+      hashTestData: parsed.hashTestData,
+    };
+  } catch (error) {
+    parsed.error = (error as Error).message;
+    parsed.valid = false;
+  }
 
   return parsed;
 }
@@ -184,6 +213,10 @@ Options:
                            Also rerun signals excluded by default
                            (HTTP_4XX, console warnings, duplicate requests,
                            origin changes)
+  --environment-id <id>    Short safe id for this environment (Build 5.1)
+  --app-build-id <id>      Short safe application build id (Build 5.1)
+  --data-id <id>           Short safe test-data fixture id (Build 5.1)
+  --hash-test-data         Also record a SHA-256 of the fixture file
   --confirm-authorized     REQUIRED. Confirms you are authorized to test the
                            target. Without it nothing is opened and nothing
                            is written.
@@ -254,9 +287,15 @@ export async function runReproduceCommand(argv: readonly string[]): Promise<numb
   console.log(`Attempts:  ${args.attempts} (declared, not hidden retries)`);
   if (args.dataPath) console.log(`Test data: ${args.dataPath} (${Object.keys(testData ?? {}).length} key(s), values never logged)`);
   console.log('Safe test mode: ON (payment actions remain blocked)');
+  if (args.provenance.environmentId) console.log(`Environment ID: ${args.provenance.environmentId}`);
+  if (args.provenance.appBuildId) console.log(`Application build: ${args.provenance.appBuildId}`);
 
   let report;
   try {
+    // Build 5.1: bytes are read only when a hash was explicitly requested.
+    const testDataFixtureHashSource =
+      args.hashTestData && args.dataPath ? await readFile(args.dataPath) : undefined;
+
     report = await reproduceSignals({
       anomalies: loaded.anomalies,
       journey: loaded.journey,
@@ -270,6 +309,8 @@ export async function runReproduceCommand(argv: readonly string[]): Promise<numb
       timeoutMs: args.timeoutMs,
       headed: args.headed,
       outputDir: DEFAULT_REPRODUCTION_DIR,
+      provenance: args.provenance,
+      testDataFixtureHashSource,
     });
   } catch (error) {
     if (error instanceof ReproductionRefused) {

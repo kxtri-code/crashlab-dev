@@ -4,7 +4,7 @@ CrashLab is a usage-based autonomous software QA platform. The long-term goal is
 let a developer point it at an authorized web app, describe a goal like *"try to
 complete checkout"*, set a budget, and have it discover failures before real users do.
 
-This repository currently contains five builds, with one integration milestone layered on Build 3:
+This repository contains five builds, with two integration milestones layered on Build 3:
 
 - **Build 1 — Scout** (`npm run scout`): opens an authorized page, maps it, captures
   telemetry, and writes a deterministic local JSON report.
@@ -18,6 +18,8 @@ This repository currently contains five builds, with one integration milestone l
   report and classifies deterministic evidence signals.
 - **Build 5 — Controlled Reproducer** (`npm run reproduce`): reruns a journey a bounded
   number of times and reports whether a signal recurred.
+- **Build 5.1 — Environment Provenance**: records *where* each run happened, so a
+  reproduction can be compared against the environment it was observed in.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -296,6 +298,129 @@ POST, and a console error never matches a page error.
 
 Stack traces are reduced to their first line before comparison, so an unstable path
 cannot cause a miss and a value inside it cannot leak.
+
+---
+
+## Build 5.1: Environment-Aware Evidence and Provenance
+
+Build 5 could say a signal recurred, but not *where*. That gap matters: a signal
+that reproduces against production-like data and one that reproduces only against a
+local fixture are very different leads, and the report could not tell them apart.
+
+Build 5.1 records **where and how** each run happened, using only safe values. It
+adds provenance to all three reports and changes nothing about what the system
+concludes: no anomaly rule, reproduction threshold, eligibility rule, payment guard
+or screenshot rule is altered.
+
+```bash
+npm run execute -- \
+  --journey reports/journey.json \
+  --environment-id local-shop \
+  --app-build-id shop-build-001 \
+  --data-id fake-login-fixture-v1 \
+  --confirm-authorized
+
+npm run reproduce -- \
+  --anomalies reports/anomalies.json \
+  --journey reports/journey.json \
+  --environment-id local-shop \
+  --app-build-id shop-build-001 \
+  --attempts 3 \
+  --confirm-authorized
+```
+
+All three flags are optional, on `execute` and `reproduce`.
+
+### What is stored
+
+`execution.json` gains an `environment` object:
+
+| Section | Contents |
+| --- | --- |
+| `fingerprint` | `sha256:...` over the canonical safe fields |
+| `fingerprintInputs` | The exact values hashed, so a mismatch can be explained |
+| `target` | Origin only — never a path, query or fragment |
+| `runtime` | Node version, platform, architecture |
+| `browser` | Name and version, read from the session that actually ran |
+| `configuration` | Headless, safe-test mode, timeout |
+| `source` | Journey schema version, planner and executor versions |
+| `application` | Optional `buildId` and `environmentId` |
+| `testData` | Optional `fixtureId` and opt-in `fixtureHash` |
+
+`anomalies.json` carries a compact `environment` reference, and
+`reproduction.json` carries a per-attempt environment plus a comparison per result.
+
+### What is never stored
+
+No username, home directory, absolute path, process id, environment-variable dump,
+or installed-package list beyond version metadata. No password, token, cookie,
+authorization header, payment value, or raw test data — in any of the three
+reports. A `file://` target is reduced to `file://`, so a local path never leaks.
+
+A caller-supplied identifier is **rejected**, not trimmed, when it looks like a
+credential, a URL, or a path. A quiet trim would half-write a secret into a
+durable report; a refusal tells you immediately.
+
+### The environment fingerprint
+
+`fingerprint` is `sha256` over a canonical, fixed-order serialization of the safe
+fields. Two runs of the same configuration produce the same value.
+
+**Excluded from the hash**, because each would make otherwise-identical runs
+differ: timestamps, attempt number, duration, report paths, temporary directories
+and random ids.
+
+**A fingerprint is an identity aid, not proof.** A matching fingerprint means the
+recorded safe fields agree. It does **not** prove two systems are the same system:
+the same Chromium build against two different application versions produces
+identical fingerprints unless the caller supplies `--app-build-id`. That is why the
+build and environment IDs are inputs when supplied, and why the fingerprint is
+documented as an aid rather than a guarantee.
+
+### Same / different / unknown
+
+Every reproduction result carries an environment comparison:
+
+| Value | Meaning | Reported as |
+| --- | --- | --- |
+| `same` | The recorded safe inputs match | "Reproduced in the same recorded environment." |
+| `different` | At least one recorded input differs | "Reproduced across different recorded environments (differing: applicationBuildId)." |
+| `unknown` | A report lacks provenance | "Reproduction occurred, but provenance was incomplete." |
+
+**The comparison never changes the classification.** A signal that reproduces across
+different environments is still `reproduced`; the difference is recorded alongside
+so a reader can weigh it. Letting provenance overturn a verdict would make the two
+contradict each other, and the classification is the one backed by evidence.
+
+### Test-data identity
+
+`--data-id` records an opaque fixture identifier. `--hash-test-data` additionally
+records a SHA-256 of the fixture **bytes** — opt-in, and the file is only read when
+the flag is present.
+
+A plain hash is an identity marker, **not** secret protection: someone who already
+knows the possible input can compare against it. That is why hashing is opt-in and
+why an explicit `--data-id` is the preferred mechanism. Neither the fixture path nor
+its contents is ever written to a report.
+
+### Legacy reports
+
+Reports written before Build 5.1 have no `environment` object. They load normally:
+
+- a missing provenance reads as `unknown`, never as an invented fingerprint
+- `anomalies.json` adds the warning *"Environment provenance is unavailable for this
+  execution report."*
+- no existing classification changes
+
+Absent is never invented. A fabricated fingerprint would corrupt the very
+comparison it exists to support.
+
+### Environment identity is not bug confirmation
+
+Provenance says **where** a signal reproduced. It says nothing about whether that is
+a defect, and `confirmed: false` is unchanged on every result. Knowing a signal
+reproduces in `build-002` but not `build-001` narrows an investigation; it does not
+conclude one.
 
 ### Build 5 does **not** do
 
@@ -1144,6 +1269,12 @@ src/
     attemptRunner.ts runs one attempt via the existing executor
     reproductionReport.ts PURE: report assembly + terminal summary
     reproducer.ts    orchestration and the safety gates
+  provenance/        Build 5.1 - pure, no browser and no network
+    types.ts         the provenance contract
+    redaction.ts     PURE: identifier validation and target-origin extraction
+    fingerprint.ts   PURE: canonical serialization and SHA-256
+    comparison.ts    PURE: same / different / unknown
+    reportMetadata.ts  safe fact collection and record assembly
   report/
     build.ts          PURE: Scout report assembly + terminal summary
     write.ts          shared JSON persistence
@@ -1182,6 +1313,12 @@ no action logic and no anomaly rules — `attemptRunner.ts` reuses the executor,
 attempt's signals come from re-running the same Build 4 classifier. Everything
 deciding *what* to compare — normalization, eligibility, classification — is pure
 and unit-tested without a browser.
+
+Build 5.1 keeps that split even inside a build that does touch a browser: everything
+that *decides* provenance — validation, fingerprinting, comparison — is pure. Only
+the browser version is read from the live session, and the Playwright version from
+local package metadata, so no provenance work launches a browser or makes a network
+call of its own.
 
 ### One trap worth knowing about
 

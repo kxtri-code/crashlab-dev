@@ -20,12 +20,15 @@ import { flagValue, scanArgs } from './args.js';
 import { loadAnalysisInputs } from '../anomaly/validator.js';
 import { AnomalyInputError } from '../anomaly/types.js';
 import { DEFAULT_ANOMALY_OUTPUT_PATH, buildAnomalyReport, summarizeAnomalyReport, writeAnomalyReport } from '../anomaly/report.js';
-import { DEFAULT_EXECUTION_OUTPUT_PATH } from './executeCommand.js';
+import { SUPPORTED_ANOMALY_JOURNEY_SCHEMA_VERSIONS } from '../anomaly/types.js';
 import { JOURNEY_SCHEMA_VERSION } from '../journey/types.js';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 
 /** Default journey plan path, matching the `journey` command. */
 export const DEFAULT_JOURNEY_INPUT_PATH = 'reports/journey.json';
+
+/** Default execution report path, matching the `execute` command. */
+export const DEFAULT_EXECUTION_INPUT_PATH = 'reports/execution.json';
 
 /** Re-exported so the usage text can name the version it validates against. */
 export { JOURNEY_SCHEMA_VERSION };
@@ -48,7 +51,7 @@ export interface ParsedAnomalyArgs {
 export function parseAnomalyArgs(argv: readonly string[]): ParsedAnomalyArgs {
   const scan = scanArgs(argv);
   const parsed: ParsedAnomalyArgs = {
-    executionPath: process.env.CRASHLAB_EXECUTION_INPUT?.trim() || DEFAULT_EXECUTION_OUTPUT_PATH,
+    executionPath: process.env.CRASHLAB_EXECUTION_INPUT?.trim() || DEFAULT_EXECUTION_INPUT_PATH,
     journeyPath: process.env.CRASHLAB_JOURNEY_INPUT?.trim() || DEFAULT_JOURNEY_INPUT_PATH,
     outputPath: process.env.CRASHLAB_ANOMALY_OUTPUT?.trim() || DEFAULT_ANOMALY_OUTPUT_PATH,
     includeConsoleWarnings: false,
@@ -101,7 +104,7 @@ Usage:
 Classifies deterministic evidence signals from a completed execution.
 
 Options:
-  --execution <path>          Execution report  [default: ${DEFAULT_EXECUTION_OUTPUT_PATH}]
+  --execution <path>          Execution report  [default: ${DEFAULT_EXECUTION_INPUT_PATH}]
   --journey <path>            Journey plan      [default: ${DEFAULT_JOURNEY_INPUT_PATH}]
   -o, --out <path>            Anomaly report    [default: ${DEFAULT_ANOMALY_OUTPUT_PATH}]
   --include-console-warnings  Also report console warnings. Off by default,

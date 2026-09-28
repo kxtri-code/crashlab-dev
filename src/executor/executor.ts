@@ -22,6 +22,7 @@ import { dispatchAction } from './actionDispatcher.js';
 import { ExecutionContext } from './executionContext.js';
 import { createEvidenceRecorder, ScreenshotPolicy } from './evidence.js';
 import { buildExecutionReport } from './executionReport.js';
+import { buildEnvironmentProvenance, collectRuntimeProvenance, hashTestDataFixture } from '../provenance/reportMetadata.js';
 import { collectSecrets, createScrubber, redactMessage } from './redaction.js';
 import { isSensitiveTestDataKey } from './redaction.js';
 import type {
@@ -40,8 +41,16 @@ const NAVIGATION_TIMEOUT_MS = 30_000;
 /** Default viewport, matching Build 1. */
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
-/** Build a step result for a step that never ran. */
-function skippedResult(step: JourneyStep, reason: string): StepExecutionResult {
+/** Await a closure, returning `null` instead of throwing. */
+async function safeAsync<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch {
+    return null;
+  }
+}
+
+/** Build a step result for a step that never ran. */function skippedResult(step: JourneyStep, reason: string): StepExecutionResult {
   const now = new Date().toISOString();
   return {
     id: step.id,
@@ -259,6 +268,30 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       screenshotsOmittedAfterSensitiveData: omittedAfterSensitiveData,
     };
 
+    // --- provenance (Build 5.1) -------------------------------------------
+    // Collected after the session is live, so the browser version is the one
+    // that actually ran. The version is read from the local browser binary; no
+    // network call is made and the target is never re-inspected.
+    const browserVersion = await safeAsync(async () => browser.version());
+    const testDataFixtureHash =
+      options.provenance?.hashTestData === true && options.testDataFixtureHashSource
+        ? hashTestDataFixture(options.testDataFixtureHashSource)
+        : null;
+
+    const environment = buildEnvironmentProvenance(
+      {
+        targetUrl: plan.target.url,
+        browserVersion,
+        headless: options.headed !== true,
+        timeoutMs,
+        safeTestMode,
+        journeySchemaVersion: plan.schemaVersion,
+        testDataFixtureHash,
+      },
+      collectRuntimeProvenance(),
+      options.provenance ?? {},
+    );
+
     return buildExecutionReport({
       plan,
       options,
@@ -270,6 +303,7 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
         screenshots,
       },
       redaction,
+      environment,
       startedAt,
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - startedAtMs,

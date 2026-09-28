@@ -65,6 +65,7 @@ export function execution(overrides: Partial<ExecutionReport> = {}): ExecutionRe
       dataProvided: false,
       screenshotsOmittedAfterSensitiveData: false,
     },
+
     executor: {
       mode: 'deterministic',
       version: '0.1.0',
@@ -73,6 +74,9 @@ export function execution(overrides: Partial<ExecutionReport> = {}): ExecutionRe
       continueOnFailure: false,
       safeTestMode: true,
     },
+    // Provenance is opt-in for a fixture. A legacy-shaped report (no
+    // environment) is a real case and is covered by the compatibility tests.
+    environment: null,
     ...overrides,
   };
 }

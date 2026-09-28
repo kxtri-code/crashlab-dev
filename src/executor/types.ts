@@ -12,6 +12,7 @@
  */
 
 import type { JourneyAction, JourneyPlan, JourneyType } from '../journey/types.js';
+import type { EnvironmentProvenance, ProvenanceInput } from '../provenance/types.js';
 
 /** Execution report schema version. */
 export const EXECUTION_SCHEMA_VERSION = '1.0';
@@ -221,6 +222,12 @@ export interface ExecutionReport {
   blockedSteps: string[];
   redaction: RedactionSummary;
   executor: ExecutorMeta;
+  /**
+   * Build 5.1 provenance: where and how this run happened. Safe by
+   * construction - a version, a boolean, a number, a null, or a caller-supplied
+   * identifier that passed sanitization. Null only for a caller that opted out.
+   */
+  environment: EnvironmentProvenance | null;
 }
 
 /** Options controlling one execution run. */
@@ -246,6 +253,18 @@ export interface ExecutionOptions {
   evidenceDir?: string;
   /** Capture screenshots at all. */
   screenshots?: boolean;
+  /**
+   * Build 5.1 provenance: optional, caller-supplied environment identity.
+   * A legacy caller that omits it still gets a fingerprint over the fields
+   * CrashLab can observe on its own.
+   */
+  provenance?: ProvenanceInput;
+  /**
+   * Bytes of the test-data fixture, hashed only when `provenance.hashTestData`
+   * is set. The bytes are never written to a report; only their digest is, and
+   * the caller must opt in.
+   */
+  testDataFixtureHashSource?: Uint8Array;
 }
 
 /** A validation failure that must stop the run before any browser launches. */
