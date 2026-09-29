@@ -31,6 +31,7 @@ import { bestCandidate, confidenceForMatch, isLowConfidence, overallConfidence }
 import { matchRoles, requiresCredentials, requiresPayment, rolesForJourney } from './match.js';
 import { generatePostActionAssertion } from './structuredAssertion.js';
 import { deriveFormPostcondition, formForElement } from './postcondition.js';
+import { planAssertionCleanup, rewordExpectedOutcome } from './assertionCleanup.js';
 import {
   AUTH_ACTION_TEXTS,
   PURCHASE_ACTION_TEXTS,
@@ -647,7 +648,15 @@ function buildSteps(
   matches: Map<ElementRole, RoleMatch>,
   scoutPath: string,
   scout: ScoutReport,
-): { steps: JourneyStep[]; inertReasons: { intent: string; reason: string; detail: string }[]; assertionRationale: string | null } {
+): {
+  steps: JourneyStep[];
+  inertReasons: { intent: string; reason: string; detail: string }[];
+  assertionRationale: string | null;
+  /** Placeholder assertions a postcondition made redundant. */
+  removedAssertions: string[];
+  /** Why any surviving placeholder was kept. */
+  retainedAssertions: string[];
+} {
   const inertReasons: { intent: string; reason: string; detail: string }[] = [];
 
   const steps: JourneyStep[] = templates.map((template, position): JourneyStep => {    const match = template.role ? (matches.get(template.role) ?? null) : null;
@@ -735,7 +744,34 @@ function buildSteps(
     }
   }
 
-  return { steps, inertReasons, assertionRationale: derived?.rationale ?? null };
+  // Build 6.4: a postcondition that covers a terminal placeholder makes that
+  // placeholder redundant. Removing it is what lets a generated journey reach
+  // full-plan verification instead of holding at `partial` forever.
+  const { remove: redundantAssertions, retained: retainedAssertions } = planAssertionCleanup(steps);
+  const removeSet = new Set(redundantAssertions);
+
+  const cleaned: JourneyStep[] = [];
+  for (const step of steps) {
+    if (removeSet.has(step.id)) continue;
+    // The surviving action states exactly what its postcondition checked, so a
+    // step never claims a business outcome its URL check cannot support.
+    cleaned.push({ ...step, expectedOutcome: rewordExpectedOutcome(step) });
+  }
+
+  // Order is renumbered so the plan has no gap left by a removed step.
+  for (let index = 0; index < cleaned.length; index++) {
+    const step = cleaned[index];
+    if (step === undefined) continue;
+    cleaned[index] = { ...step, order: index + 1 };
+  }
+
+  return {
+    steps: cleaned,
+    inertReasons,
+    assertionRationale: derived?.rationale ?? null,
+    removedAssertions: redundantAssertions,
+    retainedAssertions: retainedAssertions.map((entry) => entry.reason),
+  };
 }
 
 /** A short, factual description of an assertion, for prose that accompanies it. */
@@ -765,7 +801,7 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
     const roles: readonly RoleSpec[] = rolesForJourney(journeyType);
     const matches = matchRoles(elements, roles, goalTokens);
 
-    const { steps, inertReasons, assertionRationale } = buildSteps(
+    const { steps, inertReasons, assertionRationale, removedAssertions, retainedAssertions } = buildSteps(
       journeyType,
       templatesFor(journeyType),
       matches,
@@ -783,6 +819,8 @@ export class HeuristicJourneyPlanner implements JourneyPlanner {
       normalizedGoal,
       inertReasons,
       assertionRationale,
+      removedAssertions,
+      retainedAssertions,
     });
 
     return {
@@ -820,6 +858,10 @@ interface DiagnosticInput {
   inertReasons: readonly { intent: string; reason: string; detail: string }[];
   /** Why a structured assertion was generated, when one was. */
   assertionRationale: string | null;
+  /** Placeholder assertions a postcondition made redundant. */
+  removedAssertions: readonly string[];
+  /** Why any surviving placeholder was kept. */
+  retainedAssertions: readonly string[];
 }
 
 /** Deduplicate while preserving first-seen order, for stable serialisation. */
@@ -838,7 +880,8 @@ function deriveDiagnostics(input: DiagnosticInput): {
   warnings: string[];
   missingInformation: string[];
 } {
-  const { journeyType, classification, matches, roles, steps, elements, inertReasons, assertionRationale } = input;
+  const { journeyType, classification, matches, roles, steps, elements, inertReasons, assertionRationale, removedAssertions, retainedAssertions } =
+    input;
   const assumptions: string[] = [];
   const warnings: string[] = [];
   const missingInformation: string[] = [];
@@ -952,6 +995,17 @@ function deriveDiagnostics(input: DiagnosticInput): {
 
   if (assertionRationale !== null) {
     assumptions.push(`Structured assertion derived from Scout evidence: ${assertionRationale}`);
+  }
+
+  // Build 6.4: say plainly what happened to the terminal expectation, so a
+  // reader can tell a removed placeholder from an overlooked one.
+  if (removedAssertions.length > 0) {
+    assumptions.push(
+      'Removed a generic terminal assertion because a structured postcondition on the same journey already measures that outcome.',
+    );
+  }
+  for (const reason of retainedAssertions) {
+    assumptions.push(`Kept the terminal expectation: ${reason}`);
   }
 
   return {

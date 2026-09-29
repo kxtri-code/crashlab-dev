@@ -1374,6 +1374,7 @@ src/
     actionability.ts  PURE (3.1): is a match specific enough to act on?
     structuredAssertion.ts PURE (6.2): assertion types, validation, generation
     postcondition.ts     PURE (6.3): form-action postcondition derivation
+    assertionCleanup.ts  PURE (6.4): redundant terminal-assertion detection
     confidence.ts     PURE: evidence -> 0..1 confidence
     plan.ts           PURE: composition into ordered steps + diagnostics
     report.ts         plan persistence + terminal summary
@@ -1784,6 +1785,75 @@ No Scout change was needed — `action` and `formIndex` were already recorded. O
 `scout.json` files work unchanged, and a plan with no `postconditions` field executes
 exactly as it did in Build 6.2.
 
+---
+
+## Build 6.4: Removing Redundant Prose Assertions
+
+Build 6.3 could attach a structured postcondition to a submit step, but the planner
+still appended a placeholder — "Define the expected successful outcome" — that no
+executor can evaluate. That placeholder was skipped, recorded as unverified, and
+held the whole run at `partial` forever, even when the postcondition beside it had
+already verified the outcome.
+
+> **A structured postcondition may replace a generic expectation only when it
+> measures the same observable outcome.**
+
+### What qualifies as redundant
+
+A terminal assertion is removed only when **all** of these hold:
+
+1. it is an `assert` step
+2. it has no structured `assertion` object
+3. it has no `targetElementIds`
+4. it has no usable `locatorCandidates`
+5. it is a **planner-generated placeholder** — matched by the planner's own intent
+   name (`define_form_success`, `define_login_success`, …) *and* generic prose
+6. an **earlier** `submit` or `click` step carries an evaluable postcondition
+7. that postcondition covers the same observable outcome
+
+The planner-intent match is what makes this reliable. It is not string-guessing:
+the planner generated these steps, so it knows their names. A hand-authored plan
+carrying a real expectation will not have one, and is therefore never a candidate.
+
+### What must be preserved
+
+The default is to **keep** the assertion. A placeholder nobody can check is
+annoying; a real expectation quietly deleted is a lie. So it survives when it has a
+structured assertion, a target, a usable locator, concrete prose under a planner
+intent ("The order total is exactly 42.00 USD."), or refers to a separate outcome
+the postcondition says nothing about ("The confirmation message says the request was
+received."). Payment and safety information is never removed.
+
+The postcondition must also appear **earlier** in the journey. A later action cannot
+justify deleting an assertion that runs before it.
+
+### Navigation is not business success
+
+When a placeholder is removed, the surviving action's `expectedOutcome` is rewritten
+to describe exactly what the postcondition checked:
+
+> The page reaches the declared path /thank-you. This confirms navigation, not
+> that the operation succeeded.
+
+A URL check never becomes a claim about payment, orders, accounts, email, or
+persistence. No postcondition is ever added to hide a failure, and a failed one stays
+a failure.
+
+### Verification and baselines
+
+| Plan shape | Result |
+| --- | --- |
+| Submit with a postcondition, placeholder removed | `complete`, `unverifiedAssertions: 0` — eligible for a normal baseline, no flag |
+| No declared destination | `partial` — the placeholder is kept and still needs `--allow-unverified-assertions` |
+| Postcondition fails | `incomplete`/`failed` — ineligible for a verified baseline |
+
+Removal is deterministic, uses no module-level state, and every decision is recorded
+in the plan's assumptions, so a reader can tell a *removed* placeholder from an
+*overlooked* one.
+
+Build 6.4 adds no AI. The decision is a pure rule over the plan's own steps, with
+no natural-language interpretation.
+
 ## Next build
 
 Builds 1-6 complete the deterministic path: **map -> plan -> execute -> classify ->
@@ -1799,6 +1869,9 @@ keep track of it:
   at different points.
 - **Trend detection** - one baseline answers "is this new?". It cannot say "this is
   new *since Tuesday*".
+- **Postconditions beyond a declared destination** - a JavaScript-driven form still
+  yields no postcondition, so an SPA checkout remains partially verified. That
+  needs evidence CrashLab cannot observe from the first page load.
 
 None of these should be solved with an autonomous agent. The value in CrashLab so
 far is that every claim traces to a recorded artifact; an investigative layer that

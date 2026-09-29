@@ -71,6 +71,14 @@ export type {
   PostconditionGeneration,
   PostconditionDeclineReason,
 } from './journey/postcondition.js';
+export {
+  coversExpectedOutcome,
+  describePostconditionOutcome,
+  isGenericPlaceholderAssertion,
+  planAssertionCleanup,
+  rewordExpectedOutcome,
+} from './journey/assertionCleanup.js';
+export type { RetentionReason } from './journey/assertionCleanup.js';
 export type { RoleMatch, RoleSpec, ScoredElement, ElementRole } from './journey/match.js';
 export { scoreConfidence, confidenceForMatch, overallConfidence, isLowConfidence } from './journey/confidence.js';
 export type { ConfidenceInput } from './journey/confidence.js';
