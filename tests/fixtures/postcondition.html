@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Contact - CrashLab Postcondition Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Contact us</h1>
+
+      <!--
+        A same-origin form declaring a stable destination. The planner reads
+        `action` from the Scout report and derives a url-path postcondition
+        from it: the claim is "the browser went where the form said", not
+        "the message was delivered".
+      -->
+      <form id="contact-form" action="/thank-you" method="get">
+        <label for="name">Your name</label>
+        <input id="name" name="name" type="text" data-testid="name" />
+
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" data-testid="email" />
+
+        <label for="message">Message</label>
+        <textarea id="message" name="message" data-testid="message"></textarea>
+
+        <button type="submit" id="send" data-testid="send">Send message</button>
+      </form>
+
+      <!--
+        A cross-origin destination. The planner must not derive a postcondition
+        for it, and the executor would refuse the navigation anyway.
+      -->
+      <form id="external-form" action="https://external.invalid/collect" method="get">
+        <button type="submit" id="send-external" data-testid="send-external">Subscribe</button>
+      </form>
+
+      <!-- A payment-adjacent destination: no postcondition, ever. -->
+      <form id="payment-form" action="/payment-success" method="post">
+        <button type="submit" id="pay" data-testid="pay">Pay now</button>
+      </form>
+
+      <!-- A destination carrying a generated id: not a stable expectation. -->
+      <form id="order-form" action="/orders/550e8400-e29b-41d4-a716-446655440000" method="get">
+        <button type="submit" id="order" data-testid="order">Place order</button>
+      </form>
+
+      <!-- A JavaScript-driven form: no declared destination at all. -->
+      <form id="js-form" data-testid="js-form">
+        <button type="submit" id="js-submit" data-testid="js-submit">Do something</button>
+      </form>
+    </main>
+  </body>
+</html>

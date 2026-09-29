@@ -14,6 +14,7 @@
 import { readFile } from 'node:fs/promises';
 import type { JourneyAction, JourneyPlan, JourneyStep, JourneyTarget, JourneyType } from '../journey/types.js';
 import { validateStructuredAssertion } from '../journey/structuredAssertion.js';
+import { validatePostconditions } from '../journey/postcondition.js';
 import { JourneyPlanError, SUPPORTED_JOURNEY_SCHEMA_VERSIONS } from './types.js';
 import { toOrigin } from '../util/url.js';
 
@@ -188,6 +189,9 @@ export function validateJourneyPlan(value: unknown, path: string): JourneyPlan {
       // vouch for is dropped rather than carried, so the executor treats it as
       // prose - the same safe outcome as having none at all.
       assertion: validateStructuredAssertion(rawStep['assertion']) ?? undefined,
+      // Build 6.3: same treatment. Only URL postconditions qualify, and a
+      // malformed one is dropped rather than half-executed.
+      postconditions: validatePostconditions(rawStep['postconditions']),
       confidence: typeof rawStep['confidence'] === 'number' ? rawStep['confidence'] : 0,
       executable: false,
       source: isRecord(source) && isStringArray(source['elementIds'])

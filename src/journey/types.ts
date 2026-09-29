@@ -128,6 +128,15 @@ export type StructuredAssertion =
   | UrlOriginAssertion
   | UrlPathAssertion;
 
+/**
+ * A destination an action itself declared, which the executor checks right
+ * after that action.
+ *
+ * Only URL expectations qualify. A postcondition says "this navigated where it
+ * said it would" — never "the business operation succeeded".
+ */
+export type Postcondition = UrlOriginAssertion | UrlPathAssertion;
+
 /** One planned step. Never executed by Build 2. */
 export interface JourneyStep {
   /** Deterministic id: `step-001`, `step-002`, ... */
@@ -150,6 +159,15 @@ export interface JourneyStep {
    * keeps a prose `expectedOutcome`, which the executor records as unverified.
    */
   assertion?: StructuredAssertion;
+  /**
+   * Build 6.3: what this action's *own* declared destination should be.
+   *
+   * Attached to the action that causes it, not to a detached final assertion,
+   * so a postcondition is always evaluated immediately after the action that
+   * can influence it. Present only when Scout observed a safe destination;
+   * absent means the prose fallback stands.
+   */
+  postconditions?: Postcondition[];
   /** 0..1, from observable Scout evidence only. */
   confidence: number;
   /** Always `false` in Build 2. */

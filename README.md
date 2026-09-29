@@ -1373,6 +1373,7 @@ src/
     match.ts          PURE: Scout elements -> scored role candidates
     actionability.ts  PURE (3.1): is a match specific enough to act on?
     structuredAssertion.ts PURE (6.2): assertion types, validation, generation
+    postcondition.ts     PURE (6.3): form-action postcondition derivation
     confidence.ts     PURE: evidence -> 0..1 confidence
     plan.ts           PURE: composition into ordered steps + diagnostics
     report.ts         plan persistence + terminal summary
@@ -1383,6 +1384,7 @@ src/
     redaction.ts           PURE: scrubbing and redacted value summaries
     assertionClassifier.ts PURE: structured vs prose-only vs targeted-prose
     structuredAssertionRunner.ts  evaluates a structured assertion (6.2)
+    postconditionRunner.ts       evaluates submit postconditions (6.3)
     verification.ts        PURE: the completion model and verification record
     locatorResolver.ts     plan locator strings -> Playwright locators
     executionContext.ts    per-step budget, origin and payment guards
@@ -1584,159 +1586,6 @@ provider, key, or network surface attached to Build 2.
   through; the engine scrubs known shapes and relies on Build 3 having already
   redacted at the source.
 
-## Next build
-
-Builds 1–5 complete the deterministic path: **map → plan → execute → classify →
-reproduce**. What is deliberately absent is the part that turns a reproducible
-candidate into a *diagnosis*.
-
-The next step is investigative rather than deterministic, and is a product decision
-rather than an implementation one:
-
-- **A candidate-defect review surface** — triage, assign, and track the reproduced
-  signals Build 5 produces, so they are not lost between runs.
-- **Environment-aware reproduction** — a signal that reproduces against production
-  data may not reproduce against a controlled fixture. Recording the environment a
-  signal reproduces in is a prerequisite for trusting the result at all.
-- **Baseline comparison** — distinguish "this always happens" from "this is new",
-  which needs a recorded baseline rather than a single run.
-
-None of these should be built as an autonomous agent. The value in CrashLab so far is
-that every claim is backed by a recorded artifact; an investigative layer that cannot
-show its evidence would undo that.
-
-Not implemented.
-
-What a baseline cannot yet do, and what a next milestone would have to add:
-
-- **Baselines are per-identity, not per-run.** A baseline is only comparable to runs
-  sharing its journey hash, origin and build. Two journeys, or one journey across two
-  application builds, need two baselines. There is no baseline selection.
-- **No trend.** One baseline answers "is this new?". It cannot say "this is new *since
-  Tuesday*", because nothing links baselines to each other over time.
-- **Review state does not persist.** A candidate is regenerated identically on every
-  run; assigning it, dismissing it or linking it to a ticket would be the first state
-  CrashLab stores — and therefore the first thing needing a durability story.
-
-None of these should be solved by an autonomous agent. The value so far is that every
-claim traces to a recorded artifact; a layer that cannot show its evidence would undo
-that.
-
----
-
-## Build 6.1: Complete Run Semantics
-
-Build 2 plans routinely end with a prose step:
-
-```json
-{
-  "action": "assert",
-  "description": "Define the expected successful outcome",
-  "expectedOutcome": "The user is successfully logged in",
-  "targetElementIds": [],
-  "locatorCandidates": []
-}
-```
-
-Nothing can evaluate that. Build 3 originally treated it as a **blocking failure**,
-which meant a generated journey whose executable steps all succeeded ended `aborted` —
-and was then rejected as a baseline. That was wrong on both counts: an unsupported
-assertion is not a browser failure, it is an *unverified expectation*.
-
-> **An unverified assertion is not a passed assertion. It is also not an
-> automatically an application failure.**
-
-### How such a step is handled
-
-- **skipped**, with `skipReason: "unsupported-prose-assertion"`
-- `error: null` — it is not a failure and not a refusal
-- `verification: { status: "unverified", reason: "..." }` — nobody checked it
-- no browser action is launched, and the rest of the plan continues
-
-A **targeted** assertion with a usable locator is unaffected: Build 3's deterministic
-check (the element is present, visible, enabled) is machine-readable, so it is
-evaluated exactly as before. Only assertions with nothing to evaluate are skipped.
-
-### `completed` is not `passed`
-
-| Status | Meaning |
-| --- | --- |
-| `passed` | Every required action **and** every deterministic assertion succeeded |
-| `completed` | The plan finished, but one or more expectations are unverified |
-| `failed` | An attempted action or evaluated assertion did not succeed |
-| `blocked` | Execution was prevented before acting |
-| `partial` / `aborted` | Only part of the journey ran, or an interruption occurred |
-
-A run with a real failure or a safety block never becomes `completed`, even when a
-prose assertion is also present.
-
-### Verification metadata
-
-`execution.json` gains a `verification` object:
-
-```jsonc
-"verification": {
-  "status": "partial",           // complete | partial | incomplete | unavailable
-  "complete": false,
-  "executedSteps": 4,
-  "passedSteps": 4,
-  "failedSteps": 0,
-  "blockedSteps": 0,
-  "skippedSteps": 1,
-  "unverifiedAssertions": 1,
-  "unverifiedStepIds": ["step-005"],
-  "coverage": "executed-steps-only"  // full-plan | executed-steps-only | partial-plan | unavailable
-}
-```
-
-`verification.complete` is never `true` while an unverified assertion remains. A
-report with no `verification` block — a legacy artifact — is read as `unavailable`,
-never as complete.
-
-**Skipped is not failed.** A skipped step is a deliberate, recorded outcome: there was
-nothing to act on, or an expectation nobody could evaluate. A failed step means CrashLab
-acted and the application did not cooperate. A blocked step means CrashLab declined.
-None of them is reinterpreted as `passed`.
-
-### Partial baselines
-
-A `known-good-partial` baseline records a run that completed safely but left
-expectations unverified:
-
-```bash
-npm run baseline -- \
-  --execution reports/execution.json \
-  --anomalies reports/anomalies.json \
-  --journey reports/journey.json \
-  --baseline-id local-shop-good-v1 \
-  --name "Local shop known-good baseline" \
-  --confirm-known-good \
-  --allow-unverified-assertions
-```
-
-Rules:
-
-- `--allow-unverified-assertions` **requires** `--confirm-known-good`. Allowing a
-  partial run is not the same as approving it.
-- Without the flag, a partially verified run is refused, with the flag named in the
-  error.
-- The allowance **never** overrides a failed step, a blocked step, an aborted run, a
-  run without safe-test mode, or a payment-guard refusal.
-- The baseline is recorded as `known-good-partial` with
-  `coverage: "executed-steps-only"` and `operatorApproved: true`. It is never dressed
-  up as fully verified.
-
-A `known-good-partial` baseline is not a fully verified baseline, and the review says
-so: every report against one carries `baselineVerification` and
-`comparisonLimitations` stating that comparison reaches executed steps only. A signal
-attached to a step whose expectation was never evaluated is classified `unknown`, never
-`novel` or `persistent` — nobody established what that step was supposed to prove.
-
-An unverified assertion is not a confirmed bug, and a partial baseline is not a
-fully verified one.
-
----
-
 ## Build 6.2: Structured Assertions
 
 Build 6.1 made an unevaluable expectation honest. Build 6.2 makes it *checkable* —
@@ -1838,3 +1687,121 @@ value the executor typed moments earlier.
 
 Build 6.2 adds no AI. The planner remains a pure, deterministic function of the goal
 and the Scout report, with no Playwright import and no model call.
+
+---
+
+## Build 6.3: Stateful Form Postconditions
+
+Most generated journeys still ended partially verified, because a form submission's
+outcome is not visible when Scout first runs. Build 6.3 closes that gap for the
+common case: a form that declares its own destination.
+
+### A postcondition is not a business outcome
+
+> **CrashLab can verify that a form reached a declared destination. It cannot
+> infer that the business operation succeeded unless a separate, evidence-backed
+> assertion exists.**
+
+`<form action="/thank-you">` proves the browser was told to go there. It proves
+nothing about whether the order was placed, the payment cleared, or the message was
+delivered. A matched postcondition means **navigation happened** — nothing more.
+
+### Why it attaches to the submit step
+
+```jsonc
+{
+  "id": "step-005",
+  "action": "submit",
+  "postconditions": [
+    {
+      "type": "url-path",
+      "expectedPath": "/thank-you",
+      "match": "exact",
+      "source": { "kind": "scout-form-action", "elementId": "contact-form", "field": "action" }
+    }
+  ]
+}
+```
+
+The postcondition lives **on the action that causes it**, not on a detached final
+assertion. That means the executor checks it immediately after the submit that can
+influence it, rather than after unrelated steps. A detached assertion would be
+evaluated against state the submit never touched.
+
+Only `url-path` and `url-origin` qualify. An element or text expectation is a
+journey assertion, not a postcondition, and the validator drops it if it appears here.
+
+### Derivation rules
+
+Scout already captures `forms[].action`, `forms[].id` and each element's
+`formIndex`, so **no Scout change was needed**. A postcondition is derived only when
+every one of these holds:
+
+| Rule | On failure |
+| --- | --- |
+| The form declares a non-empty `action` | `no-action-attribute` / `empty-action` |
+| The action is not a `javascript:` or `data:` URL | `javascript-destination` |
+| The action has no unresolved `{id}` / `:id` placeholder | `unresolvable-destination` |
+| The action is **not** payment-adjacent | `payment-form` |
+| The destination is same-origin | `cross-origin` |
+| The path holds no secret-bearing word | `secret-bearing-path` |
+| The path contains no generated id | `dynamic-path` |
+
+A refusal is always silent in the plan's structure but explicit in its reasoning: the
+prose fallback stands and no postcondition is invented. **A form action such as
+`/payment-success` does not make payment execution safe** — it is a reason for extra
+caution, so no postcondition is derived from it at all.
+
+### Execution behaviour
+
+| Case | Result |
+| --- | --- |
+| Destination reached | step `passed`, postcondition `matched` |
+| Destination not reached | step `failed`, postcondition `not-matched` |
+| URL unreadable | step `skipped` and unverified — never `failed` |
+| No postcondition available | unchanged Build 6.1 submit behaviour |
+
+Navigation is awaited with the run's **existing timeout** and `domcontentloaded`; there
+are no arbitrary sleeps. A fixed delay would be a guess about the target's speed, and
+a guess becomes a false "not-matched" on a slow machine.
+
+A failed postcondition means the action was attempted and the declared navigation did
+not occur. It does **not** mean a confirmed application bug, a confirmed backend
+failure, or a confirmed business failure. Verification stays out of `complete`, so the
+run cannot become a fully verified baseline.
+
+### Safety controls are unchanged
+
+The payment guard runs **before** the postcondition, so a payment submit is refused
+and no postcondition is ever evaluated. Screenshot omission after sensitive data, the
+cross-origin policy, test-data requirements, and safe-test mode are all untouched. No
+new payment path exists, and no postcondition can launder an action failure into
+success.
+
+### Scout compatibility
+
+No Scout change was needed — `action` and `formIndex` were already recorded. Old
+`scout.json` files work unchanged, and a plan with no `postconditions` field executes
+exactly as it did in Build 6.2.
+
+## Next build
+
+Builds 1-6 complete the deterministic path: **map -> plan -> execute -> classify ->
+reproduce -> compare against a baseline**. What is deliberately absent is the part
+that turns a candidate into a *diagnosis*, and the state that would let a team
+keep track of it:
+
+- **Review-state persistence** - a candidate is regenerated identically on every
+  run. Assigning, dismissing or linking one to a ticket is the first state
+  CrashLab would store, and therefore the first thing needing a durability story.
+- **Baseline chaining** - baselines are per-identity, so a journey changed across
+  two builds needs two of them, and nothing records that they are the same journey
+  at different points.
+- **Trend detection** - one baseline answers "is this new?". It cannot say "this is
+  new *since Tuesday*".
+
+None of these should be solved with an autonomous agent. The value in CrashLab so
+far is that every claim traces to a recorded artifact; an investigative layer that
+cannot show its evidence would undo that.
+
+Not implemented.

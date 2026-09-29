@@ -21,6 +21,7 @@ import type {
   JourneyPlannerInput,
   JourneyStep,
   JourneyType,
+  Postcondition,
   StructuredAssertion,
 } from './types.js';
 import { JOURNEY_SCHEMA_VERSION, confidenceBand } from './types.js';
@@ -29,6 +30,7 @@ import { classifyGoal } from './classify.js';
 import { bestCandidate, confidenceForMatch, isLowConfidence, overallConfidence } from './confidence.js';
 import { matchRoles, requiresCredentials, requiresPayment, rolesForJourney } from './match.js';
 import { generatePostActionAssertion } from './structuredAssertion.js';
+import { deriveFormPostcondition, formForElement } from './postcondition.js';
 import {
   AUTH_ACTION_TEXTS,
   PURCHASE_ACTION_TEXTS,
@@ -386,8 +388,17 @@ function templatesFor(journeyType: JourneyType): StepTemplate[] {
         {
           intent: 'identify_submit_control',
           action: 'identify',
-          actionable: 'click',
-          requiredText: SUBMIT_ACTION_TEXTS,
+          // A submit control performs a submission, so it maps to `submit` and
+          // can carry the form's declared destination. Build 6.3 depends on
+          // this: a postcondition attached to a plain `click` would be checked
+          // after an action that does not navigate.
+          //
+          // No `requiredText` here, unlike the other actionable steps. A submit
+          // control is already identified by the matcher's evidence - it lives
+          // in a form, is a submit-type input or button - so demanding an
+          // exact phrase like "Submit" would reject a perfectly ordinary
+          // "Send message" and leave the journey without a postcondition.
+          actionable: 'submit',
           role: 'submit_control',
           isRequired: true,
           describe: (ctx) =>
@@ -609,6 +620,26 @@ function deriveFinalAssertion(
   return null;
 }
 
+/**
+ * Derive the postcondition for a submit step, from the form the step's own
+ * target belongs to.
+ *
+ * Returns `null` when the form declares nothing checkable, which is the normal
+ * case and is not an error - the prose fallback stands.
+ */
+function deriveSubmitPostcondition(scout: ScoutReport, targetElementIds: readonly string[]): Postcondition[] {
+  for (const elementId of targetElementIds) {
+    const located = formForElement(scout, elementId);
+    if (located === null) continue;
+
+    const generation = deriveFormPostcondition(located.form, located.formId, scout.target.inputUrl);
+    // One target form is enough: a submit step acts on one form, and taking the
+    // first match keeps the choice deterministic.
+    return generation.kind === 'generated' ? [generation.postcondition] : [];
+  }
+  return [];
+}
+
 /** Build the ordered, `executable: false` steps for a journey. */
 function buildSteps(
   journeyType: JourneyType,
@@ -658,6 +689,10 @@ function buildSteps(
 
     const targetElementIds = match?.candidates.slice(0, 3).map((candidate) => candidate.elementId) ?? [];
 
+    // Build 6.3: a submit action carries the destination its own form declared.
+    // Attached here, to the action that causes it, so the executor can check it
+    // immediately afterwards rather than after unrelated steps.
+    const postconditions = decision.action === 'submit' ? deriveSubmitPostcondition(scout, targetElementIds) : undefined;
     return {
       id: `step-${String(position + 1).padStart(3, '0')}`,
       order: position + 1,
@@ -669,6 +704,10 @@ function buildSteps(
       expectedOutcome,
       // Build 6.2: a machine-readable expectation is attached below, once the
       // whole plan exists. Its absence means the prose fallback stands.
+      // Build 6.3: postconditions are attached only to a submit action that
+      // declared one. The key is spread in conditionally so a plan with none
+      // looks exactly as it did before, rather than carrying a null field.
+      ...(postconditions !== undefined && postconditions.length > 0 ? { postconditions } : {}),
       confidence: Math.round(confidence * 100) / 100,
       // Build 2 never executes. Build 3 may transform these descriptions.
       executable: false,

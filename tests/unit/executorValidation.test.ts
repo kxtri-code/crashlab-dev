@@ -247,6 +247,7 @@ function result(overrides: Partial<StepExecutionResult> & { id: string; status: 
     skipReason: null,
     verification: null,
     assertion: null,
+    postconditions: null,
     description: '',
     planConfidence: 0.7,
     ...overrides,

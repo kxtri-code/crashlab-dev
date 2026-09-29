@@ -71,6 +71,10 @@ export async function startFixtureServer(): Promise<{ server: Server; origin: st
       // Build 6.2: pages whose links give the planner a structured assertion.
       '/catalog': 'assertions.html',
       '/cart': 'cart.html',
+      // Build 6.3: forms whose declared action gives the planner a postcondition.
+      '/contact': 'postcondition.html',
+      '/thank-you': 'thank-you.html',
+      '/payment-success': 'thank-you.html',
     };
     const file = pageFile[pathname];
     if (file) {

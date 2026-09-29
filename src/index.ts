@@ -61,6 +61,16 @@ export {
   validateStructuredAssertion,
 } from './journey/structuredAssertion.js';
 export type { AssertionGeneration, AssertionCandidate, AssertionType } from './journey/structuredAssertion.js';
+export {
+  deriveFormPostcondition,
+  formForElement,
+  validatePostconditions,
+} from './journey/postcondition.js';
+export type {
+  Postcondition,
+  PostconditionGeneration,
+  PostconditionDeclineReason,
+} from './journey/postcondition.js';
 export type { RoleMatch, RoleSpec, ScoredElement, ElementRole } from './journey/match.js';
 export { scoreConfidence, confidenceForMatch, overallConfidence, isLowConfidence } from './journey/confidence.js';
 export type { ConfidenceInput } from './journey/confidence.js';
@@ -115,6 +125,8 @@ export { classifyAssertion, isUnverifiableAssertion, skipReasonFor } from './exe
 export type { AssertionVerdict } from './executor/assertionClassifier.js';
 export { evaluateStructuredAssertion } from './executor/structuredAssertionRunner.js';
 export type { AssertionOutcome, AssertionResultKind } from './executor/structuredAssertionRunner.js';
+export { evaluatePostconditions, worstOutcome } from './executor/postconditionRunner.js';
+export type { PostconditionOutcome, PostconditionResult } from './executor/postconditionRunner.js';
 export { buildVerification, deriveExecutionStatus, isFullyVerified } from './executor/verification.js';
 export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
 export { ExecutionContext } from './executor/executionContext.js';

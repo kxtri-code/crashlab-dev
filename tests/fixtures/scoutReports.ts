@@ -220,8 +220,10 @@ export function formScoutReport(): ScoutReport {
       el({ index: 3, type: 'textarea', tag: 'textarea', name: 'message', label: 'Message', formIndex: 0 }),
       el({ index: 4, type: 'input', tag: 'input', inputType: 'file', name: 'cv', label: 'Attach CV', formIndex: 0 }),
       el({ index: 5, type: 'button', tag: 'button', text: 'Submit application', name: 'commit', formIndex: 0 }),
+      // Outside the form, so `formForElement` has something to decline.
+      el({ index: 6, type: 'link', tag: 'a', text: 'Privacy policy', href: 'https://example.test/privacy' }),
     ],
-    forms: [form({ id: 'application' })],
+    forms: [form({ id: 'application', action: 'https://example.test/thank-you', method: 'post' })],
   });
 }
 

@@ -19,7 +19,9 @@ import { join } from 'node:path';
 import { resolveStepTarget } from './locatorResolver.js';
 import { classifyAssertion } from './assertionClassifier.js';
 import { evaluateStructuredAssertion } from './structuredAssertionRunner.js';
+import { evaluatePostconditions, worstOutcome } from './postconditionRunner.js';
 import type { AssertionOutcome } from './structuredAssertionRunner.js';
+import type { PostconditionOutcome } from './postconditionRunner.js';
 import type { BlockReason, SkipReason, StepObservations } from './types.js';
 import { resolveFixturePath, resolveValue } from './testData.js';
 import type { ExecutionContext } from './executionContext.js';
@@ -334,6 +336,61 @@ const submit: ActionHandler = async (step, context) => {
   const originGuard = context.guardOrigin(urlAfter, step);
   if (originGuard) return { ...originGuard, observations: resolved.target.observations };
 
+  // Build 6.3: the form's own declared destination, checked immediately after
+  // the submit that can influence it. A match means navigation happened - it is
+  // not a business-success claim, and the wording below says so.
+  const postconditions = step.postconditions ?? [];
+  if (postconditions.length > 0) {
+    const outcomes = await evaluatePostconditions(context.page, postconditions, context.timeoutMs);
+    const worst = worstOutcome(outcomes);
+    const describe = outcomes
+      .map((outcome) =>
+        outcome.result === 'matched'
+          ? `${outcome.type} matched`
+          : outcome.result === 'not-matched'
+            ? `${outcome.type} not matched (at ${outcome.actualPath ?? outcome.actualOrigin ?? 'unknown'})`
+            : `${outcome.type} could not be evaluated`,
+      )
+      .join('; ');
+
+    if (worst === 'not-matched') {
+      // The action was attempted and the declared navigation did not occur. That
+      // is a real result and keeps verification out of `complete`; it is not a
+      // confirmed defect.
+      return {
+        status: 'failed',
+        reason: 'action-failed',
+        message: `Submitted via ${resolved.target.selectedLocator}, but the declared destination was not reached: ${describe}.`,
+        observations: resolved.target.observations,
+        selectedLocator: resolved.target.selectedLocator,
+        postconditions: outcomes,
+      };
+    }
+
+    if (worst === 'unevaluable') {
+      // The destination could not be read. That is not a failure, so the step
+      // is skipped and unverified rather than failed.
+      return {
+        status: 'skipped',
+        skipReason: 'unsupported-prose-assertion',
+        message: `Submitted via ${resolved.target.selectedLocator}, but the destination could not be verified: ${describe}.`,
+        observations: resolved.target.observations,
+        selectedLocator: resolved.target.selectedLocator,
+        postconditions: outcomes,
+        verification: { status: 'unverified', reason: 'postcondition-unevaluable' },
+      };
+    }
+
+    return {
+      status: 'passed',
+      observations: resolved.target.observations,
+      selectedLocator: resolved.target.selectedLocator,
+      message: `Submitted via ${resolved.target.selectedLocator} and reached its declared destination: ${describe}. ` +
+        'This confirms navigation, not that the operation succeeded.',
+      postconditions: outcomes,
+    };
+  }
+
   return {
     status: 'passed',
     observations: resolved.target.observations,
@@ -417,6 +474,8 @@ export interface ActionOutcome {
   verification?: { status: 'unverified'; reason: string } | null;
   /** Build 6.2: the outcome of a structured assertion, when one was evaluated. */
   assertion?: AssertionOutcome | null;
+  /** Build 6.3: the outcome of each postcondition, when any were evaluated. */
+  postconditions?: PostconditionOutcome[];
   /** Extra detail recorded alongside the step, always redacted. */
   notes?: string[];
 }

@@ -237,6 +237,11 @@ export interface StepExecutionResult {
    * observation, never a defect verdict.
    */
   assertion: import('./structuredAssertionRunner.js').AssertionOutcome | null;
+  /**
+   * Build 6.3: the outcome of each postcondition this step declared. Null when
+   * the step declared none, or when they were never evaluated.
+   */
+  postconditions: import('./postconditionRunner.js').PostconditionOutcome[] | null;
   /** Step description, echoed from the immutable plan. */
   description: string;
   /** Step confidence, echoed from the immutable plan. Not a pass/fail signal. */
