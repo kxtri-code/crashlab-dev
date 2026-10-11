@@ -333,6 +333,61 @@ export type { ClassificationContext } from './review/classifier.js';
 export { buildCandidateReport, summarizeCandidateReport, summarizeCandidates, writeCandidateReport } from './review/candidateReport.js';
 export type { ReviewInput } from './review/candidateReport.js';
 
+// --- Build 8: Persistent Candidate Review State ---------------------------
+// File-based append-only event log and deterministic projection.
+// No database, no frontend, no network. Records human decisions without
+// modifying underlying evidence or automatic classification.
+
+export {
+  canonicalCandidateId,
+  canonicalCandidatePayload,
+  validateCandidateId,
+} from './review/identity.js';
+export type { CandidateIdentityInput } from './review/identity.js';
+
+export {
+  REVIEW_STATE_SCHEMA_VERSION,
+  DEFAULT_REVIEW_STATE_DIR,
+  REVIEW_STATE_EVENTS_FILE,
+  REVIEW_STATE_PROJECTION_FILE,
+  MAX_REVIEW_NOTE_LENGTH,
+  ReviewStateError,
+  ReviewStateTransitionError,
+  ReviewStateIntegrityError,
+  ReviewStateInputError,
+} from './review/reviewStateTypes.js';
+export type {
+  ReviewStateStatus,
+  ReviewStateEvent,
+  CandidateReviewState,
+  ReviewStateDocument,
+  SourceCandidateReference,
+} from './review/reviewStateTypes.js';
+
+export {
+  VALID_STATUS_TRANSITIONS,
+  ALL_REVIEW_STATUSES,
+  isReviewStateStatus,
+  validateStateTransition,
+  validateDuplicateChain,
+} from './review/transitions.js';
+
+export {
+  validateReviewerIdentity,
+  validateReviewNote,
+  validateDuplicateTarget,
+} from './review/reviewStateValidator.js';
+
+export {
+  projectReviewState,
+  validateEventRecord,
+  loadEventsFile,
+  loadReviewState,
+  rebuildReviewState,
+  recordReviewEvent,
+} from './review/reviewStateStore.js';
+export type { RecordReviewEventInput, LoadedReviewState } from './review/reviewStateStore.js';
+
 // --- Build 5: Controlled Reproducer ---------------------------------------
 // Matching, eligibility and classification are pure. Only `attemptRunner.ts`
 // reaches the browser, and it does so by calling the existing Build 3 executor

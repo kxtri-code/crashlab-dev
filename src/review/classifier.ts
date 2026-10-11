@@ -19,8 +19,9 @@ import type { AnomalyReport } from '../anomaly/report.js';
 import type { ReproductionReport } from '../reproducer/types.js';
 import { matchingKeyFor } from '../reproducer/normalization.js';
 import { signalKeyHash } from '../baseline/identity.js';
-import type { Baseline, BaselineSignal } from '../baseline/types.js';
+import type { Baseline, BaselineIdentity, BaselineSignal } from '../baseline/types.js';
 import type { CompatibilityResult } from './compatibility.js';
+import { canonicalCandidateId } from './identity.js';
 import type { Candidate, CandidateClassification, ReviewComparison, ReviewStatus } from './types.js';
 
 /** Classification priority, so a deterministic order is guaranteed. */
@@ -472,31 +473,48 @@ function describeChange(anomaly: Anomaly, baseline: BaselineSignal): string {
 }
 
 /** Assign stable candidate ids and project verdicts into the report shape. */
-export function toCandidates(verdicts: readonly Verdict[], comparison: ReviewComparison): Candidate[] {
-  return verdicts.map((entry, index) => ({
-    id: `candidate-${String(index + 1).padStart(3, '0')}`,
-    signalKeyHash: signalKeyHash(matchingKeyFor(entry.anomaly) ?? entry.anomaly.id),
-    ruleId: entry.anomaly.ruleId,
-    kind: entry.anomaly.kind,
-    classification: entry.classification,
-    reviewStatus: entry.reviewStatus,
-    // Build 6 confirms nothing.
-    confirmed: false as const,
-    reproduced: entry.reproduced,
-    baselinePresent: entry.baselinePresent,
-    currentPresent: entry.currentPresent,
-    // The run-level comparison, not a per-signal one: a signal cannot be in a
-    // different environment when the run was not.
-    environmentComparison: comparison,
-    evidence: {
-      currentAnomalyIds: entry.currentPresent ? [entry.anomaly.id] : [],
-      reproductionResultIds: entry.reproductionClassification === null ? [] : [entry.anomaly.id],
-      baselineSignalKeys: entry.baselineKeys,
-      relatedBaselineSignalKey: entry.relatedBaselineKey,
-    },
-    message: entry.message,
-    requiresInvestigation: entry.requiresInvestigation,
-    reproductionClassification: entry.reproductionClassification,
-    stepOrder: entry.stepOrder,
-  }));
+export function toCandidates(
+  verdicts: readonly Verdict[],
+  comparison: ReviewComparison,
+  identity?: Partial<BaselineIdentity> | null,
+): Candidate[] {
+  return verdicts.map((entry, index) => {
+    const rawKey = matchingKeyFor(entry.anomaly) ?? entry.relatedBaselineKey ?? entry.anomaly.id;
+    const candidateId = canonicalCandidateId({
+      targetOrigin: identity?.targetOrigin ?? null,
+      journeyHash: identity?.journeyHash ?? null,
+      applicationBuildId: identity?.applicationBuildId ?? null,
+      ruleId: entry.anomaly.ruleId,
+      signalKey: rawKey,
+      stepId: entry.anomaly.stepId ?? null,
+    });
+
+    return {
+      id: `candidate-${String(index + 1).padStart(3, '0')}`,
+      candidateId,
+      signalKeyHash: signalKeyHash(rawKey),
+      ruleId: entry.anomaly.ruleId,
+      kind: entry.anomaly.kind,
+      classification: entry.classification,
+      reviewStatus: entry.reviewStatus,
+      // Build 6 confirms nothing.
+      confirmed: false as const,
+      reproduced: entry.reproduced,
+      baselinePresent: entry.baselinePresent,
+      currentPresent: entry.currentPresent,
+      // The run-level comparison, not a per-signal one: a signal cannot be in a
+      // different environment when the run was not.
+      environmentComparison: comparison,
+      evidence: {
+        currentAnomalyIds: entry.currentPresent ? [entry.anomaly.id] : [],
+        reproductionResultIds: entry.reproductionClassification === null ? [] : [entry.anomaly.id],
+        baselineSignalKeys: entry.baselineKeys,
+        relatedBaselineSignalKey: entry.relatedBaselineKey,
+      },
+      message: entry.message,
+      requiresInvestigation: entry.requiresInvestigation,
+      reproductionClassification: entry.reproductionClassification,
+      stepOrder: entry.stepOrder,
+    };
+  });
 }

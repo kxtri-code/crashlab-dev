@@ -76,7 +76,7 @@ export function buildCandidateReport(input: ReviewInput): CandidateReport {
     executionStatus: input.execution.status,
   });
 
-  const candidates = toCandidates(verdicts, compatibility.classification);
+  const candidates = toCandidates(verdicts, compatibility.classification, identity);
 
   // Build 6.1: a partially verified baseline narrows every verdict below. The
   // limit is stated rather than absorbed, so "novel" is never read as

@@ -26,6 +26,7 @@ import { ANOMALY_USAGE, runAnomalyCommand } from './cli/anomalyCommand.js';
 import { REPRODUCE_USAGE, runReproduceCommand } from './cli/reproduceCommand.js';
 import { BASELINE_USAGE, runBaselineCommand } from './cli/baselineCommand.js';
 import { REVIEW_USAGE, runReviewCommand } from './cli/reviewCommand.js';
+import { REVIEW_STATE_USAGE, runReviewStateCommand } from './cli/reviewStateCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -58,6 +59,7 @@ Usage:
   npm run reproduce -- --anomalies reports/anomalies.json --journey reports/journey.json --confirm-authorized
   npm run baseline -- --baseline-id <id> --confirm-known-good
   npm run review -- --baseline reports/baselines/<id>.json
+  npm run review-state -- --candidate <id> --status investigating
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -67,6 +69,7 @@ Commands:
   reproduce      Rerun a journey to test whether a signal recurs (Build 5)
   baseline       Record an explicit known-good state (Build 6)
   review         Compare a run against a baseline for candidate defects (Build 6)
+  review-state   Record persistent human review decisions for candidates (Build 8)
   help           Show this message
   version        Print the build version
 
@@ -362,6 +365,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runReviewCommand(rest);
+  }
+
+  if (first === 'review-state') {
+    if (wantsHelp(rest)) {
+      console.log(REVIEW_STATE_USAGE);
+      return 0;
+    }
+    return runReviewStateCommand(rest);
   }
 
   return main([...argv]);

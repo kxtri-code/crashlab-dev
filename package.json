@@ -24,6 +24,7 @@
     "reproduce:env": "node --env-file=.env --import tsx src/cli.ts reproduce",
     "baseline": "tsx src/cli.ts baseline",
     "review": "tsx src/cli.ts review",
+    "review-state": "tsx src/cli.ts review-state",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

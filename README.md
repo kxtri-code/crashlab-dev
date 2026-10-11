@@ -24,6 +24,10 @@ This repository contains five builds, with two integration milestones layered on
   records an explicit known-good state, then compares a later run against it.
 - **Build 6.1 — Complete Run Semantics**: a generated journey finishes in a reviewable
   state instead of aborting on an assertion nobody can evaluate.
+- **Build 7 — Baseline Continuity and Lineage**: tracks baseline ancestry and detects
+  reintroduced defects across application versions.
+- **Build 8 — Persistent Candidate Review State** (`npm run review-state`): records
+  human triage decisions separately in an append-only event log and deterministic projection.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -33,10 +37,11 @@ reports/journey.json        what should be attempted     (Build 2) - immutable i
 reports/execution.json      what happened when attempted (Build 3) - immutable input
 reports/anomalies.json      what looked abnormal         (Build 4) - immutable input
 reports/reproduction.json   did it happen again          (Build 5)
-reports/reproduction/
-  attempt-001/
-    execution.json           one controlled rerun        (Build 5)
-    anomalies.json           its classified signals      (Build 5)
+reports/candidates.json     what was compared vs baseline (Build 6/7) - immutable input
+reports/baselines/<id>.json known-good baseline records   (Build 6/7)
+reports/review-state/
+  events.jsonl              append-only human review log  (Build 8)
+  state.json                deterministic projection      (Build 8)
 ```
 
 Build 2 **plans only** and Build 3 **only attempts**. An execution result is not a
@@ -1950,27 +1955,129 @@ expectations content) for provenance and reproduction consistency. The hash is
 deterministic and order-independent due to canonicalization. No expectation
 content is inlined into the report; only the hash and count are recorded.
 
-## Next build
+## Build 8: Persistent Candidate Review State
 
-Builds 1-6 complete the deterministic path: **map -> plan -> execute -> classify ->
-reproduce -> compare against a baseline**. What is deliberately absent is the part
-that turns a candidate into a *diagnosis*, and the state that would let a team
-keep track of it:
+Build 8 adds durable, file-based recording for human review decisions (`npm run review-state`).
 
-- **Review-state persistence** - a candidate is regenerated identically on every
-  run. Assigning, dismissing or linking one to a ticket is the first state
-  CrashLab would store, and therefore the first thing needing a durability story.
-- **Baseline chaining** - baselines are per-identity, so a journey changed across
-  two builds needs two of them, and nothing records that they are the same journey
-  at different points.
-- **Trend detection** - one baseline answers "is this new?". It cannot say "this is
-  new *since Tuesday*".
-- **Postconditions beyond a declared destination** - a JavaScript-driven form still
-  yields no postcondition, so an SPA checkout remains partially verified. That
-  needs evidence CrashLab cannot observe from the first page load.
+### Separation of Concerns
 
-None of these should be solved with an autonomous agent. The value in CrashLab so
-far is that every claim traces to a recorded artifact; an investigative layer that
-cannot show its evidence would undo that.
+The architecture strictly separates three concerns:
 
-Not implemented.
+1. **What CrashLab observed:** raw execution events, console logs, network activity, and page errors (`execution.json`, `anomalies.json`).
+2. **What CrashLab automatically classified:** deterministic candidate defects derived from baseline comparison and reproduction (`candidates.json`, `reproduction.json`).
+3. **What a human decided:** operator triage, investigation progress, duplicate links, notes, and resolution (`reports/review-state/`).
+
+A human review state **never** rewrites or upgrades an automatic classification. A candidate classified as `unknown` remains `unknown`. `confirmedBug: false` and `confirmed: false` remain strictly false on every report and projection.
+
+### Non-Negotiable Storage Principles
+
+- `execution.json`, `journey.json`, `anomalies.json`, `reproduction.json`, `candidates.json`, and baseline files are **strictly immutable**.
+- Review state is stored in an independent directory: `reports/review-state/`.
+- No database, no frontend, no network calls, no authentication, and no AI are added.
+
+### Storage Architecture
+
+Review state uses an append-only event log with a deterministic derived projection:
+
+```
+reports/review-state/
+  events.jsonl   append-only stream of review events
+  state.json     deterministic current-state projection
+```
+
+- **`events.jsonl`:** Each review decision appends an immutable JSON record with `schemaVersion`, `eventId`, `candidateId`, `previousStatus`, `newStatus`, `reviewer`, `note`, `duplicateOf`, `timestamp`, `previousRevision`, `revision`, `sourceCandidate`, `automaticClassification`, and `confirmed: false`.
+- **`state.json`:** A pure projection computed from the event history. Contains all candidates sorted deterministically by candidate ID, their current status, timestamps, revision count, latest note, reviewer, and explicit disclaimers.
+
+### Candidate Identity
+
+Review state depends on stable candidate identity. A candidate's ID must not shift when reports are reordered or other signals appear.
+
+CrashLab derives a canonical candidate identity (`cand-<16-hex>`) deterministically from:
+- Target origin (sanitized)
+- Canonical journey plan hash (`journeyHash`)
+- Application build identity (when present)
+- Anomaly rule ID (`ruleId`)
+- Normalized signal key (`signalKey` via `matchingKeyFor`)
+- Step ID (when step-scoped)
+
+This identity is invariant to:
+- Array position and report ordering
+- Timestamp and execution duration
+- Temporary paths and output filenames
+- Unrelated candidates in the same run
+
+For backward compatibility, candidates in `candidates.json` retain their sequential `id` (`candidate-001`, `candidate-002`) while carrying `candidateId` (`cand-...`). The `review-state` CLI accepts either format.
+
+### Statuses and Transitions
+
+Supported review statuses:
+- `open` — unreviewed or reopened candidate.
+- `investigating` — actively being investigated by a reviewer.
+- `accepted` — human operator acknowledges the issue as genuine (does not alter automatic severity or confirm a bug).
+- `dismissed` — reviewed and discarded as expected behavior or not actionable.
+- `duplicate` — duplicates an existing candidate (`--duplicate-of` required).
+- `resolved` — issue has been resolved/handled.
+
+#### Transition Matrix
+
+- `open`, `investigating`, `accepted` can transition forward to any valid status.
+- Terminal statuses (`dismissed`, `duplicate`, `resolved`) must be explicitly reopened to `open` before any further transition is permitted.
+- Invalid transitions are rejected before writing, leaving files untouched.
+
+### Duplicate Handling
+
+- Status `duplicate` requires `--duplicate-of <candidate-id>`.
+- Self-duplication (`A -> A`) is rejected.
+- Transitive duplicate chains (`A -> B` where `B` is already a duplicate) are rejected.
+- Cyclic duplicate loops are detected and rejected.
+
+### Reviewer and Note Safety
+
+- **Reviewer Identity:** Validated as a safe identifier (letters, digits, dot, underscore, hyphen; max 64 chars). Control characters, path separators, tokens, and passwords are rejected.
+- **Notes:** Bounded to 1,000 characters. Control characters and embedded credentials (bearer tokens, basic auth, JWTs, card numbers, passwords) are rejected.
+
+### Recovery and Rebuilding
+
+If `state.json` is missing or tampered with:
+- Consistency checks detect any mismatch between `events.jsonl` and `state.json` and refuse unsafe writes.
+- `npm run review-state -- --rebuild` deterministically re-projects `state.json` directly from `events.jsonl`.
+
+### CLI Commands
+
+```bash
+# Set status to investigating with reviewer and note
+npm run review-state -- \
+  --candidate cand-ab5442b3310b9b4d \
+  --status investigating \
+  --reviewer kamal \
+  --note "Reproduced locally; checking the checkout service"
+
+# Using positional candidate alias
+npm run review-state -- \
+  --candidate candidate-001 \
+  --status accepted \
+  --reviewer kamal \
+  --note "Confirmed issue in checkout error handling"
+
+# Mark candidate as duplicate of another
+npm run review-state -- \
+  --candidate candidate-002 \
+  --status duplicate \
+  --duplicate-of candidate-001 \
+  --reviewer kamal
+
+# Reopen a dismissed or resolved candidate
+npm run review-state -- \
+  --candidate candidate-001 \
+  --status open \
+  --note "Reopened after finding in staging"
+
+# List candidates and review states
+npm run review-state -- --list
+
+# Show full history of a candidate
+npm run review-state -- --show candidate-001
+
+# Rebuild projection
+npm run review-state -- --rebuild
+```

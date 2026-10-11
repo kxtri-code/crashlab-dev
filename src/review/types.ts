@@ -68,6 +68,8 @@ export interface CandidateEvidence {
 export interface Candidate {
   /** Deterministic: `candidate-001`, `candidate-002`, ... */
   id: string;
+  /** Durable canonical candidate identity for persistent review state (Build 8). */
+  candidateId?: string;
   /** Hashed stable key, so the report stays readable and redaction-safe. */
   signalKeyHash: string;
   ruleId: string;

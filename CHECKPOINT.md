@@ -102,3 +102,99 @@ git diff build2-journey -- tests/unit/journeyPlan.test.ts
 
 Any change to `src/journey/` should be a deliberate, documented decision — not an
 accident of Build 3 implementation.
+
+---
+
+# CrashLab — Build 8 Checkpoint
+
+A stable, verified snapshot of the completed Build 8 state: Persistent Candidate Review State.
+
+- **Checkpoint tag:** `build8-review-state`
+- **Contract tag:** `review-state-v1`
+- **Schema version:** `"1.0"`
+
+## Verification at checkpoint time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,126 passed** / 36 files |
+| Unit tests | **970 passed** (28 files) |
+| Browser tests | **156 passed** (8 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Immutability | byte-identical across execution, journey, anomalies, reproduction, candidates, and baselines |
+| Working tree | clean |
+
+## The Build 8 Contract (version "1.0")
+
+Build 8 adds durable, file-based recording for human review decisions (`reports/review-state/`).
+
+### Invariants and Boundaries
+
+1. **Strict separation:** Human review records what an operator decided, never what CrashLab observed or automatically classified.
+2. **No bug confirmation:** `confirmedBug: false` and `confirmed: false` remain false on every candidate, report, event, and projection.
+3. **No classification upgrade:** Human review cannot change automatic classifications (`unknown`, `novel`, `reintroduced`, `persistent`, `resolved`, `changed`, `cross-environment`, `different-build`).
+4. **No severity modification:** Human review cannot modify automatic severity or signal level.
+5. **Evidence immutability:** `execution.json`, `journey.json`, `anomalies.json`, `reproduction.json`, `candidates.json`, and baseline files are never modified by review state.
+6. **No external dependencies:** No database, no frontend, no network calls, no authentication, and no AI.
+
+### Storage Layout
+
+```
+reports/review-state/
+  events.jsonl    append-only JSONL log of review events
+  state.json      deterministic projection of current candidate review states
+```
+
+### Event Record (`events.jsonl`)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `schemaVersion` | `string` | `"1.0"` |
+| `eventId` | `string` | Deterministic unique id `evt-<12-hex>` |
+| `candidateId` | `string` | Canonical candidate id `cand-<16-hex>` |
+| `previousStatus` | `ReviewStateStatus \| null` | `null` on first event, matches previous `newStatus` |
+| `newStatus` | `ReviewStateStatus` | Target status |
+| `reviewer` | `string \| null` | Sanitized operator identifier (max 64 chars) |
+| `note` | `string \| null` | Operator note (max 1,000 chars, no secrets) |
+| `duplicateOf` | `string \| null` | Required for `duplicate`, null otherwise |
+| `reason` | `string \| null` | Optional explanation |
+| `timestamp` | `string` | ISO 8601 string |
+| `previousRevision` | `number` | Integer revision before this event (0 on first event) |
+| `revision` | `number` | `previousRevision + 1` |
+| `sourceCandidate` | `object \| null` | Reference to report, signalKeyHash, ruleId |
+| `automaticClassification` | `string` | Snapshot of automated classification |
+| `confirmed` | `false` | **Always `false`** |
+
+### Projected Candidate Record (`state.json`)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `schemaVersion` | `string` | `"1.0"` |
+| `candidateId` | `string` | Canonical candidate id |
+| `currentStatus` | `ReviewStateStatus` | Current projected status |
+| `firstSeenAt` | `string` | Timestamp of initial event |
+| `lastUpdatedAt` | `string` | Timestamp of latest event |
+| `reviewer` | `string \| null` | Latest reviewer |
+| `latestNote` | `string \| null` | Latest note |
+| `duplicateOf` | `string \| null` | Target candidate id when duplicate |
+| `revision` | `number` | Event revision counter |
+| `eventCount` | `number` | Total events for this candidate |
+| `lastEventId` | `string` | ID of latest event |
+| `eventIds` | `string[]` | Ordered event IDs |
+| `automaticClassification` | `string` | Snapshot of automatic classification |
+| `confirmed` | `false` | **Always `false`** |
+| `disclaimer` | `string` | Explicit invariant statement |
+
+### State Transitions
+
+- Active statuses (`open`, `investigating`, `accepted`) may transition forward to any valid status.
+- Terminal statuses (`dismissed`, `duplicate`, `resolved`) must be explicitly reopened to `open`.
+- Status `duplicate` requires `--duplicate-of` and rejects self-references, transitive duplicate chains, and cycles.
+- Stale revisions and discontinuous event sequences are rejected.
+
+### Known Limitations
+
+- **Local single-process MVP:** Designed for file-based local or CI execution. Concurrency is guarded by optimistic revision continuity checks, but multi-user concurrent writes require filesystem coordination.
+- **Natural-language notes:** Notes are free-text operator comments and are never parsed as evidence or automated test verdicts.
+- **No ticketing integration:** Build 8 records state locally in JSON/JSONL without external ticketing or issue tracker sync.
