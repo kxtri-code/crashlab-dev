@@ -26,12 +26,13 @@ import type { Candidate, CandidateClassification, ReviewComparison, ReviewStatus
 /** Classification priority, so a deterministic order is guaranteed. */
 const CLASSIFICATION_ORDER: Record<CandidateClassification, number> = {
   novel: 0,
-  changed: 1,
-  persistent: 2,
-  resolved: 3,
-  'different-build': 4,
-  'cross-environment': 5,
-  unknown: 6,
+  reintroduced: 1,
+  changed: 2,
+  persistent: 3,
+  resolved: 4,
+  'different-build': 5,
+  'cross-environment': 6,
+  unknown: 7,
 };
 
 /** Build 5 classifications that count as a confirmed reproduction. */
@@ -48,6 +49,10 @@ export interface ClassificationContext {
    * from `execution.json`; a signal on one of these is not evidence of novelty.
    */
   unverifiedStepIds: readonly string[];
+  /** Build 7: ancestor baselines from oldest to newest or newest to oldest. */
+  ancestorBaselines?: readonly Baseline[];
+  /** Build 7: execution status of the current run, for absence reliability. */
+  executionStatus?: string;
 }
 
 /** The verdict for one signal, before ids are assigned. */
@@ -70,6 +75,7 @@ interface Verdict {
 function statusFor(classification: CandidateClassification): ReviewStatus {
   switch (classification) {
     case 'novel':
+    case 'reintroduced':
     case 'changed':
       return 'needs-review';
     case 'persistent':
@@ -109,9 +115,41 @@ function findChangedBaselineSignal(
   );
 }
 
+/**
+ * Look for a signal in compatible ancestor baselines.
+ *
+ * A signal is reintroduced only when:
+ *  - it was present in an ancestor baseline
+ *  - it was absent from intermediate baseline(s) (including the selected baseline)
+ *  - the lineage is explicit
+ */
+function findAncestorSignal(
+  signalKey: string,
+  ancestors: readonly Baseline[] | undefined,
+): { baseline: Baseline; signal: BaselineSignal } | null {
+  if (!ancestors || ancestors.length === 0) return null;
+
+  for (const ancestor of ancestors) {
+    const found = ancestor.knownSignals.find((s) => s.signalKey === signalKey);
+    if (found) {
+      return { baseline: ancestor, signal: found };
+    }
+  }
+
+  return null;
+}
+
 /** Classify every current signal against the baseline. */
 export function classifyCandidates(context: ClassificationContext): Verdict[] {
-  const { anomalies, reproduction, baseline, compatibility, unverifiedStepIds: unverifiedStepIdsInput } = context;
+  const {
+    anomalies,
+    reproduction,
+    baseline,
+    compatibility,
+    unverifiedStepIds: unverifiedStepIdsInput,
+    ancestorBaselines,
+    executionStatus,
+  } = context;
   const known = baseline?.knownSignals ?? [];
 
   // Reproduction result per anomaly id, so a signal is only judged on evidence
@@ -205,7 +243,7 @@ export function classifyCandidates(context: ClassificationContext): Verdict[] {
       });
     }
 
-    // --- same environment: the four real verdicts -------------------------
+    // --- same environment: the real verdicts -----------------------------
     if (match === undefined) {
       const changed = findChangedBaselineSignal(signalKey, anomaly, known);
       if (changed !== null) {
@@ -218,6 +256,23 @@ export function classifyCandidates(context: ClassificationContext): Verdict[] {
           baselineKeys: [changed.signalKey],
         });
       }
+
+      // Build 7: check for reintroduced signal in ancestor baselines
+      const ancestorWithSignal = findAncestorSignal(signalKey, ancestorBaselines);
+      if (ancestorWithSignal !== null) {
+        return verdict(anomaly, 'reintroduced', true, false, true, {
+          message:
+            `A reproducible signal was present in ancestor baseline "${ancestorWithSignal.baseline.baselineId}", ` +
+            `was absent from intermediate baseline "${baseline.baselineId}", and has reappeared in the current run. ` +
+            'Reintroduced indicates recurrence across baseline versions.',
+          requiresInvestigation: true,
+          reproductionClassification: repro?.classification ?? null,
+          stepOrder,
+          relatedBaselineKey: ancestorWithSignal.signal.signalKey,
+          baselineKeys: [ancestorWithSignal.signal.signalKey],
+        });
+      }
+
       return verdict(anomaly, 'novel', true, false, true, {
         message:
           'A reproducible signal was not present in the compatible known-good baseline. ' +
@@ -244,10 +299,48 @@ export function classifyCandidates(context: ClassificationContext): Verdict[] {
   function resolvedFromBaseline(anomaliesSeen: ReadonlySet<string>): Verdict[] {
     if (baseline === null || !compatibility.comparable) return [];
     if (compatibility.classification === 'different-environment') return [];
+    const executionIncomplete =
+      reproduction === null ||
+      (executionStatus !== undefined && ['aborted', 'failed', 'blocked'].includes(executionStatus));
 
     const resolved: Verdict[] = [];
     for (const signal of known) {
       if (anomaliesSeen.has(signal.signalKey)) continue;
+
+      if (executionIncomplete) {
+        resolved.push({
+          anomaly: {
+            id: `baseline:${signal.anomalyId}`,
+            ruleId: signal.ruleId as Anomaly['ruleId'],
+            kind: signal.kind as Anomaly['kind'],
+            signalLevel: signal.signalLevel as Anomaly['signalLevel'],
+            status: 'observed',
+            message: '',
+            stepId: signal.stepId,
+            stepOrder: null,
+            source: { executionReport: '', evidenceType: 'network', eventIndex: null },
+            details: {},
+            possiblyExpected: signal.accepted,
+            confirmed: false,
+            occurrences: 1,
+          },
+          classification: 'unknown',
+          reviewStatus: 'inconclusive',
+          reproduced: false,
+          baselinePresent: true,
+          currentPresent: false,
+          message:
+            'A signal recorded in the known-good baseline was not observed, but the current run failed, blocked, or was aborted. ' +
+            'Absence cannot be established reliably.',
+          requiresInvestigation: false,
+          reproductionClassification: null,
+          stepOrder: null,
+          relatedBaselineKey: signal.signalKey,
+          baselineKeys: [signal.signalKey],
+        });
+        continue;
+      }
+
       resolved.push({
         anomaly: {
           id: `baseline:${signal.anomalyId}`,

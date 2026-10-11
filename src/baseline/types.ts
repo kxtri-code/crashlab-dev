@@ -126,6 +126,18 @@ export interface BaselineSafety {
   executionIncomplete: boolean;
 }
 
+/** Lineage metadata for baseline continuity across versions (Build 7). */
+export interface BaselineLineage {
+  parentBaselineId: string | null;
+  rootBaselineId: string;
+  depth: number;
+  ancestors: string[];
+  truncated: boolean;
+}
+
+/** Maximum lineage depth before truncation is reported. */
+export const MAX_LINEAGE_DEPTH = 32;
+
 /** The stored baseline document. */
 export interface Baseline {
   schemaVersion: string;
@@ -148,24 +160,37 @@ export interface Baseline {
    */
   verification: BaselineVerification;
   /** Why this baseline was considered known-good, and what it does not claim. */
-  rationale: string;  interpretation: {
+  rationale: string;
+  interpretation: {
     confirmedBug: false;
     automaticSeverity: false;
     note: string;
   };
+  /** Build 7: parent baseline ID, if this baseline descended from another. */
+  parentBaselineId: string | null;
+  /** Build 7: lineage metadata tracing ancestors back to root. */
+  lineage: BaselineLineage;
+}
+
+/** Entry in the baseline registry index file. */
+export interface BaselineRegistryEntry {
+  baselineId: string;
+  name: string;
+  report: string;
+  createdAt: string;
+  targetOrigin: string | null;
+  environmentFingerprint: string | null;
+  journeyHash?: string | null;
+  parentBaselineId?: string | null;
+  status?: BaselineStatus;
+  verificationCoverage?: string;
+  applicationBuildId?: string | null;
 }
 
 /** The index file listing available baselines. */
 export interface BaselineRegistry {
   schemaVersion: string;
-  baselines: {
-    baselineId: string;
-    name: string;
-    report: string;
-    createdAt: string;
-    targetOrigin: string | null;
-    environmentFingerprint: string | null;
-  }[];
+  baselines: BaselineRegistryEntry[];
 }
 
 /** A refusal to create or use a baseline. */

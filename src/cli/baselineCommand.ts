@@ -19,10 +19,12 @@ import process from 'node:process';
 import { flagValue, scanArgs } from './args.js';
 import { loadJourneyPlan } from '../executor/planValidator.js';
 import { loadAnomalyInput, loadExecutionInput } from '../anomaly/validator.js';
-import { buildBaseline, writeBaseline } from '../baseline/writer.js';
+import { buildBaseline, readBaseline, writeBaseline } from '../baseline/writer.js';
 import { assertBaselineCandidate, validateBaselineCandidate } from '../baseline/validator.js';
 import { sanitizeIdentifier, safeVersion } from '../provenance/redaction.js';
 import { BaselineError, DEFAULT_BASELINE_DIR } from '../baseline/types.js';
+import type { Baseline } from '../baseline/types.js';
+import { listBaselines, resolveBaselinePath } from '../baseline/registry.js';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 
 /** Flags this command understands. */
@@ -38,6 +40,13 @@ export const BASELINE_FLAGS = [
   '--allow-unverified-assertions',
   '--allow-declared-expectations',
   '--baseline-dir',
+  '--parent-baseline',
+  '--list',
+  '--filter-origin',
+  '--filter-journey',
+  '--filter-build',
+  '--filter-status',
+  '--filter-coverage',
 ] as const;
 
 /** Parsed `baseline` arguments. Pure, so it is unit-testable. */
@@ -62,6 +71,13 @@ export interface ParsedBaselineArgs {
    */
   allowDeclaredExpectations: boolean;
   baselineDir: string;
+  parentBaseline: string | null;
+  list: boolean;
+  filterOrigin: string | null;
+  filterJourney: string | null;
+  filterBuild: string | null;
+  filterStatus: string | null;
+  filterCoverage: string | null;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -82,6 +98,13 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
     allowUnverifiedAssertions: false,
     allowDeclaredExpectations: false,
     baselineDir: DEFAULT_BASELINE_DIR,
+    parentBaseline: null,
+    list: false,
+    filterOrigin: null,
+    filterJourney: null,
+    filterBuild: null,
+    filterStatus: null,
+    filterCoverage: null,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter((flag) => !(BASELINE_FLAGS as readonly string[]).includes(flag)),
@@ -114,6 +137,13 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
   parsed.confirmedBy = requireValue(['--confirmed-by']);
   const baselineDir = requireValue(['--baseline-dir']);
   if (baselineDir !== null) parsed.baselineDir = baselineDir;
+  parsed.parentBaseline = requireValue(['--parent-baseline']);
+  parsed.filterOrigin = requireValue(['--filter-origin']);
+  parsed.filterJourney = requireValue(['--filter-journey']);
+  parsed.filterBuild = requireValue(['--filter-build']);
+  parsed.filterStatus = requireValue(['--filter-status']);
+  parsed.filterCoverage = requireValue(['--filter-coverage']);
+  parsed.list = scan.flags.has('--list');
 
   // --accept-signal is repeatable, so every occurrence is collected.
   for (const [flag, value] of scan.flags) {
@@ -206,10 +236,17 @@ Options:
                            expectations (reports/expectations.json). The
                            baseline is recorded as known-good-declared.
                            Requires --confirm-known-good.
+  --parent-baseline <path> Build 7: optional parent baseline to descend from
+  --list                   Build 7: list stored baselines deterministically
+  --filter-origin <origin> Filter by target origin (with --list)
+  --filter-journey <hash>  Filter by journey plan hash (with --list)
+  --filter-build <id>      Filter by application build ID (with --list)
+  --filter-status <status> Filter by baseline status (with --list)
+  --filter-coverage <cov>  Filter by verification coverage (with --list)
 
 Baselines are immutable. A duplicate id is refused rather than overwritten.
 
-Build 6 opens no browser, makes no network call, and uses no AI.`;
+Build 7 opens no browser, makes no network call, and uses no AI.`;
 
 export const BASELINE_SUMMARY_NOTE =
   'A baseline records what a human accepted as normal. It is not a defect verdict and confirms nothing.';
@@ -225,6 +262,39 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
   if (!args.valid) {
     console.error(args.error ?? 'Invalid arguments.');
     return 2;
+  }
+
+  // --- Build 7: list mode -------------------------------------------------
+  if (args.list) {
+    const baselines = await listBaselines({
+      baselineDir: args.baselineDir,
+      filters: {
+        targetOrigin: args.filterOrigin,
+        journeyHash: args.filterJourney,
+        applicationBuildId: args.filterBuild,
+        status: args.filterStatus,
+        verificationCoverage: args.filterCoverage,
+      },
+    });
+
+    console.log('CRASHLAB SCOUT - BASELINE REGISTRY v0.1.0');
+    console.log('');
+    console.log(`  Directory:       ${args.baselineDir}`);
+    console.log(`  Baselines found: ${baselines.length}`);
+    if (baselines.length > 0) {
+      console.log('');
+      for (const b of baselines) {
+        console.log(`  ${b.baselineId.padEnd(28)} [${b.status ?? 'known-good'}] ${b.name}`);
+        console.log(`      Created:   ${b.createdAt}`);
+        console.log(`      Origin:    ${b.targetOrigin ?? '(unknown)'}`);
+        if (b.journeyHash) console.log(`      Journey:   ${b.journeyHash}`);
+        if (b.applicationBuildId) console.log(`      Build:     ${b.applicationBuildId}`);
+        if (b.parentBaselineId) console.log(`      Parent:    ${b.parentBaselineId}`);
+        console.log(`      Coverage:  ${b.verificationCoverage ?? 'unknown'}`);
+        console.log('');
+      }
+    }
+    return 0;
   }
 
   // --- gate: operator confirmation, before anything is read or written ----
@@ -257,6 +327,18 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     return 1;
   }
 
+  // --- Build 7: load optional parent baseline -----------------------------
+  let parentBaseline: Baseline | null = null;
+  if (args.parentBaseline !== null) {
+    const parentPath = resolveBaselinePath(args.parentBaseline, args.baselineDir);
+    try {
+      parentBaseline = await readBaseline(parentPath);
+    } catch (error) {
+      console.error(`Refusing to create a baseline:\n  - Parent baseline could not be read: ${(error as Error).message}`);
+      return 1;
+    }
+  }
+
   const validation = validateBaselineCandidate({
     execution,
     anomalies,
@@ -264,6 +346,8 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     acceptedSignalIds: args.acceptedSignalIds,
     allowUnverifiedAssertions: args.allowUnverifiedAssertions,
     allowDeclaredExpectations: args.allowDeclaredExpectations,
+    parentBaseline,
+    candidateBaselineId: args.baselineId,
     paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
   });
 
@@ -290,6 +374,7 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
       paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
       allowUnverifiedAssertions: args.allowUnverifiedAssertions,
       allowDeclaredExpectations: args.allowDeclaredExpectations,
+      parentBaseline,
       baselineDir: args.baselineDir,
     });
 
@@ -304,6 +389,10 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     console.log(`  Target origin:  ${baseline.identity.targetOrigin ?? '(unknown)'}`);
     console.log(`  Journey hash:   ${baseline.identity.journeyHash}`);
     console.log(`  Environment:    ${baseline.identity.environmentFingerprint ?? '(no provenance)'}`);
+    if (baseline.parentBaselineId) {
+      console.log(`  Parent ID:      ${baseline.parentBaselineId}`);
+      console.log(`  Lineage depth:  ${baseline.lineage.depth}${baseline.lineage.truncated ? ' (truncated)' : ''}`);
+    }
     console.log(`  Known signals:  ${baseline.knownSignals.length}`);
     console.log(`  Accepted:       ${baseline.confirmation.acceptedSignalIds.length}`);
     if (baseline.status === 'known-good-partial') {

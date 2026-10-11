@@ -10,6 +10,8 @@
  * be entirely expected behaviour the baseline simply predates.
  */
 
+import type { BaselineLineage } from '../baseline/types.js';
+
 /** Candidate review schema version. */
 export const REVIEW_SCHEMA_VERSION = '1.0';
 
@@ -35,6 +37,8 @@ export type ReviewComparison =
 export type CandidateClassification =
   /** Reproduced, and absent from a compatible baseline. */
   | 'novel'
+  /** Build 7: present in an ancestor baseline, absent in an intermediate baseline, and reappeared now. */
+  | 'reintroduced'
   /** Present in both. Already present in the known-good state. */
   | 'persistent'
   /** Present in the baseline, absent now, in a valid comparison. */
@@ -91,6 +95,7 @@ export interface Candidate {
 export interface CandidateSummary {
   totalSignals: number;
   novel: number;
+  reintroduced: number;
   persistent: number;
   resolved: number;
   changed: number;
@@ -99,6 +104,32 @@ export interface CandidateSummary {
   differentBuild: number;
   /** Reproduced signals, which are the only ones that can be candidates. */
   reproducedSignals: number;
+}
+
+/** How a baseline was selected for candidate review (Build 7). */
+export type CandidateSelectionMode = 'explicit' | 'latest-compatible' | 'none';
+
+/** Candidate baseline evaluated during baseline selection (Build 7). */
+export interface CandidateBaselineDecision {
+  baselineId: string;
+  report: string;
+  compatible: boolean;
+  reason: string | null;
+  createdAt?: string;
+}
+
+/** History/lineage entry in the review report (Build 7). */
+export interface BaselineHistoryEntry {
+  baselineId: string;
+  name?: string;
+  targetOrigin: string | null;
+  journeyHash: string;
+  applicationBuildId: string | null;
+  status: string;
+  coverage: string;
+  createdAt: string;
+  parentBaselineId: string | null;
+  relationship: 'selected' | 'ancestor' | 'incompatible';
 }
 
 /**
@@ -151,6 +182,18 @@ export interface CandidateReport {
     candidatesRequireReview: true;
     note: string;
   };
+  /** Build 7: baseline selection mode. */
+  selectionMode?: CandidateSelectionMode;
+  /** Build 7: selected baseline ID. */
+  selectedBaselineId?: string | null;
+  /** Build 7: parent baseline ID of the selected baseline. */
+  parentBaselineId?: string | null;
+  /** Build 7: lineage metadata of the selected baseline. */
+  lineage?: BaselineLineage | null;
+  /** Build 7: candidate baselines evaluated during selection. */
+  candidatesConsidered?: CandidateBaselineDecision[];
+  /** Build 7: history representation of baseline lineage. */
+  history?: BaselineHistoryEntry[];
 }
 
 /** Default candidate report path. */

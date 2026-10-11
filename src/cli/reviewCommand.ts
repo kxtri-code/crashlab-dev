@@ -30,15 +30,22 @@ import { flagValue, scanArgs } from './args.js';
 import { loadJourneyPlan } from '../executor/planValidator.js';
 import { loadAnomalyInput, loadExecutionInput } from '../anomaly/validator.js';
 import { readBaseline } from '../baseline/writer.js';
+import { buildBaselineIdentity } from '../baseline/identity.js';
+import { DEFAULT_BASELINE_DIR } from '../baseline/types.js';
+import type { Baseline } from '../baseline/types.js';
+import { findLatestCompatibleBaseline, loadBaselineAncestry, resolveBaselinePath } from '../baseline/registry.js';
 import { buildCandidateReport, summarizeCandidateReport, writeCandidateReport } from '../review/candidateReport.js';
 import { REPRODUCTION_SCHEMA_VERSION } from '../reproducer/types.js';
 import type { ReproductionReport } from '../reproducer/types.js';
 import { DEFAULT_CANDIDATE_OUTPUT_PATH } from '../review/types.js';
+import type { CandidateBaselineDecision, CandidateSelectionMode } from '../review/types.js';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 
 /** Flags this command understands. */
 export const REVIEW_FLAGS = [
   '--baseline',
+  '--latest-compatible',
+  '--baseline-dir',
   '--execution',
   '--anomalies',
   '--reproduction',
@@ -52,6 +59,8 @@ export const REVIEW_FLAGS = [
 /** Parsed `review` arguments. Pure, so it is unit-testable. */
 export interface ParsedReviewArgs {
   baselinePath: string | null;
+  latestCompatible: boolean;
+  baselineDir: string;
   executionPath: string;
   anomaliesPath: string;
   reproductionPath: string | null;
@@ -67,6 +76,8 @@ export function parseReviewArgs(argv: readonly string[]): ParsedReviewArgs {
   const scan = scanArgs(argv);
   const parsed: ParsedReviewArgs = {
     baselinePath: null,
+    latestCompatible: false,
+    baselineDir: DEFAULT_BASELINE_DIR,
     executionPath: process.env.CRASHLAB_EXECUTION_INPUT?.trim() || 'reports/execution.json',
     anomaliesPath: process.env.CRASHLAB_ANOMALY_INPUT?.trim() || 'reports/anomalies.json',
     reproductionPath: process.env.CRASHLAB_REPRODUCTION_INPUT?.trim() || 'reports/reproduction.json',
@@ -96,6 +107,9 @@ export function parseReviewArgs(argv: readonly string[]): ParsedReviewArgs {
 
   const baseline = requireValue(['--baseline']);
   if (baseline !== null) parsed.baselinePath = baseline;
+  parsed.latestCompatible = scan.flags.has('--latest-compatible');
+  const baselineDir = requireValue(['--baseline-dir']);
+  if (baselineDir !== null) parsed.baselineDir = baselineDir;
   const execution = requireValue(['--execution']);
   if (execution !== null) parsed.executionPath = execution;
   const anomalies = requireValue(['--anomalies']);
@@ -104,6 +118,13 @@ export function parseReviewArgs(argv: readonly string[]): ParsedReviewArgs {
   if (journey !== null) parsed.journeyPath = journey;
   const output = requireValue(['--output', '--out', '-o']);
   if (output !== null) parsed.outputPath = output;
+
+  // Build 7: mutual exclusivity between --baseline and --latest-compatible
+  if (parsed.baselinePath !== null && parsed.latestCompatible) {
+    parsed.error = 'Options --baseline and --latest-compatible are mutually exclusive. Specify one or neither.';
+    parsed.valid = false;
+    return parsed;
+  }
 
   // Reading a reproduction report is optional, and opting out is a first-class
   // flag rather than a magic empty string, which shells mangle. An empty value
@@ -145,8 +166,11 @@ Compares a current run against a known-good baseline and writes
 reports/candidates.json.
 
 Options:
-  --baseline <path>        The known-good baseline to compare against.
+  --baseline <path-or-id>  The known-good baseline to compare against (path or ID).
                            Optional: without one, everything is unknown.
+  --latest-compatible      Build 7: select newest compatible baseline automatically.
+                           Mutually exclusive with --baseline.
+  --baseline-dir <path>    Storage directory for baselines [default: ${DEFAULT_BASELINE_DIR}]
   --execution <path>       Current execution report
   --anomalies <path>       Current anomaly report
   --reproduction <path>    Current reproduction report. Optional: without it,
@@ -158,7 +182,7 @@ Options:
 "No baseline means unknown, not novel." A signal is called novel only when it
 reproduced AND a compatible baseline did not contain it.
 
-Build 6 opens no browser, makes no network call, uses no AI, and confirms no bug.`;
+Build 7 opens no browser, makes no network call, uses no AI, and confirms no bug.`;
 
 export const REVIEW_SUMMARY_NOTE =
   'A novel signal is a lead for review, not a confirmed defect. Build 6 assigns no severity and proposes no fix.';
@@ -225,11 +249,35 @@ export async function runReviewCommand(argv: readonly string[]): Promise<number>
     return 1;
   }
 
-  // A baseline is optional. Its absence yields `unknown`, never `novel`.
-  let baseline = null;
-  if (args.baselinePath !== null) {
+  // Build 7: select baseline according to selection mode
+  let baseline: Baseline | null = null;
+  let selectionMode: CandidateSelectionMode = 'none';
+  let candidatesConsidered: CandidateBaselineDecision[] = [];
+  let ancestorBaselines: Baseline[] = [];
+
+  if (args.latestCompatible) {
+    selectionMode = 'latest-compatible';
+    const currentIdentity = buildBaselineIdentity(journey, execution);
+    const latest = await findLatestCompatibleBaseline(currentIdentity, args.baselineDir);
+    candidatesConsidered = latest.candidateDecisions;
+    if (latest.selectedBaseline === null) {
+      console.error(`Refusing to review: No compatible baseline found in ${args.baselineDir}.`);
+      if (candidatesConsidered.length > 0) {
+        console.error('Candidate baselines evaluated:');
+        for (const c of candidatesConsidered) {
+          console.error(`  - ${c.baselineId}: ${c.reason ?? 'incompatible'}`);
+        }
+      }
+      return 1;
+    }
+    baseline = latest.selectedBaseline;
+    ancestorBaselines = await loadBaselineAncestry(baseline, args.baselineDir);
+  } else if (args.baselinePath !== null) {
+    selectionMode = 'explicit';
+    const resolvedPath = resolveBaselinePath(args.baselinePath, args.baselineDir);
     try {
-      baseline = await readBaseline(args.baselinePath);
+      baseline = await readBaseline(resolvedPath);
+      ancestorBaselines = await loadBaselineAncestry(baseline, args.baselineDir);
     } catch (error) {
       console.error(`Cannot review: ${(error as Error).message}`);
       return 1;
@@ -253,12 +301,15 @@ export async function runReviewCommand(argv: readonly string[]): Promise<number>
     anomalies,
     reproduction,
     journey,
+    selectionMode,
+    candidatesConsidered,
+    ancestorBaselines,
     paths: {
       execution: args.executionPath,
       anomalies: args.anomaliesPath,
       reproduction: args.reproductionPath,
       journey: args.journeyPath,
-      baseline: args.baselinePath,
+      baseline: args.baselinePath ?? (baseline ? baseline.baselineId : null),
     },
   });
 

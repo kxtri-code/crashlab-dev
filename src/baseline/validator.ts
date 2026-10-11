@@ -16,7 +16,45 @@
 import type { AnomalyReport } from '../anomaly/report.js';
 import type { ExecutionReport } from '../executor/types.js';
 import type { JourneyPlan } from '../journey/types.js';
-import { BaselineError } from './types.js';
+import { buildBaselineIdentity } from './identity.js';
+import { sanitizeIdentifier } from '../provenance/redaction.js';
+import { BaselineError, MAX_LINEAGE_DEPTH } from './types.js';
+import type { Baseline, BaselineIdentity, BaselineLineage } from './types.js';
+
+/**
+ * Validate that a baseline ID satisfies all filesystem and safety constraints.
+ *
+ * Rules:
+ *  - non-empty string
+ *  - free from control characters
+ *  - free from path separators
+ *  - free from traversal sequences
+ *  - passes provenance identifier sanitization
+ */
+export function validateBaselineId(baselineId: string): void {
+  if (!baselineId || typeof baselineId !== 'string' || baselineId.trim() === '') {
+    throw new BaselineError('Baseline ID must be a non-empty string.');
+  }
+  const trimmed = baselineId.trim();
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) {
+    throw new BaselineError('Baseline ID must not contain control characters.');
+  }
+  if (/[\\/]/.test(trimmed)) {
+    throw new BaselineError('Baseline ID must not contain path separators.');
+  }
+  if (trimmed.includes('..')) {
+    throw new BaselineError('Baseline ID must not contain traversal sequences.');
+  }
+  try {
+    const sanitized = sanitizeIdentifier(trimmed, 'baseline ID');
+    if (!sanitized) {
+      throw new BaselineError('Baseline ID must be a valid identifier.');
+    }
+  } catch (err) {
+    if (err instanceof BaselineError) throw err;
+    throw new BaselineError((err as Error).message);
+  }
+}
 
 /**
  * Execution statuses a baseline may be created from.
@@ -53,6 +91,10 @@ export interface BaselineValidationInput {
   allowDeclaredExpectations?: boolean;
   /** Paths, echoed into any error so the operator knows which file. */
   paths?: { execution: string; anomalies: string; journey: string };
+  /** Optional parent baseline being descended from (Build 7). */
+  parentBaseline?: Baseline | null;
+  /** Optional candidate baseline id being created (Build 7). */
+  candidateBaselineId?: string;
 }
 
 /** The outcome of a validation. */
@@ -71,6 +113,8 @@ export interface BaselineValidationResult {
   warnings: string[];
   /** Signal ids the operator accepted, after validation. */
   acceptedSignalIds: string[];
+  /** Lineage metadata computed when parent validation succeeds. */
+  lineage?: BaselineLineage;
 }
 
 /**
@@ -239,12 +283,129 @@ export function validateBaselineCandidate(input: BaselineValidationInput): Basel
     );
   }
 
+  // --- Build 7: candidate baseline ID & parent baseline validation --------
+  if (input.candidateBaselineId !== undefined) {
+    try {
+      validateBaselineId(input.candidateBaselineId);
+    } catch (error) {
+      blockers.push((error as Error).message);
+    }
+  }
+
+  let lineage: BaselineLineage | undefined;
+  if (input.parentBaseline !== undefined && input.candidateBaselineId !== undefined) {
+    const parentValidation = validateParentBaseline(
+      input.candidateBaselineId,
+      buildBaselineIdentity(input.journey, input.execution),
+      input.parentBaseline,
+    );
+    lineage = parentValidation.lineage;
+    blockers.push(...parentValidation.blockers);
+  }
+
   return {
     safe: blockers.length === 0,
     partial,
     blockers,
     warnings,
     acceptedSignalIds: [...known].sort(),
+    lineage,
+  };
+}
+
+/** Outcome of validating parent baseline lineage and compatibility. */
+export interface ParentValidationResult {
+  valid: boolean;
+  blockers: string[];
+  lineage: BaselineLineage;
+}
+
+/**
+ * Validate that a parent baseline candidate is compatible and safe to descend from.
+ *
+ * Rules:
+ *  - A baseline cannot be its own parent.
+ *  - Must not create a cycle (the candidate baselineId must not appear in parent ancestry).
+ *  - Must belong to the same target origin.
+ *  - Must belong to the same journey identity (journeyHash, journeyType, journeySchemaVersion).
+ *  - Must not belong to an incompatible application build (if both specify a build ID and they differ).
+ *  - Lineage depth is bounded by MAX_LINEAGE_DEPTH with honest truncation reporting.
+ */
+export function validateParentBaseline(
+  candidateBaselineId: string,
+  candidateIdentity: BaselineIdentity,
+  parent: Baseline | null,
+): ParentValidationResult {
+  if (parent === null) {
+    return {
+      valid: true,
+      blockers: [],
+      lineage: {
+        parentBaselineId: null,
+        rootBaselineId: candidateBaselineId,
+        depth: 0,
+        ancestors: [],
+        truncated: false,
+      },
+    };
+  }
+
+  const blockers: string[] = [];
+
+  if (parent.baselineId === candidateBaselineId) {
+    blockers.push('A baseline cannot be its own parent.');
+  }
+
+  const parentAncestors = parent.lineage?.ancestors ?? [];
+  if (parentAncestors.includes(candidateBaselineId) || (parent.lineage?.rootBaselineId === candidateBaselineId && parent.baselineId === candidateBaselineId)) {
+    blockers.push(`Cycle detected in baseline lineage: candidate ID "${candidateBaselineId}" already appears in parent ancestry.`);
+  }
+
+  if (parent.identity.targetOrigin !== candidateIdentity.targetOrigin) {
+    blockers.push(
+      `Parent baseline belongs to a different target origin ("${parent.identity.targetOrigin ?? 'unknown'}" vs "${candidateIdentity.targetOrigin ?? 'unknown'}"). target origin mismatch.`,
+    );
+  }
+
+  if (parent.identity.journeyHash !== candidateIdentity.journeyHash) {
+    blockers.push('Parent baseline belongs to a different journey plan (journey hash mismatch).');
+  }
+
+  if (parent.identity.journeyType !== candidateIdentity.journeyType) {
+    blockers.push(`Parent baseline belongs to a different journey type ("${parent.identity.journeyType}" vs "${candidateIdentity.journeyType}").`);
+  }
+
+  if (parent.identity.journeySchemaVersion !== candidateIdentity.journeySchemaVersion) {
+    blockers.push('Parent baseline journey schema version does not match candidate.');
+  }
+
+  if (
+    parent.identity.applicationBuildId !== null &&
+    candidateIdentity.applicationBuildId !== null &&
+    parent.identity.applicationBuildId !== candidateIdentity.applicationBuildId
+  ) {
+    blockers.push(
+      `Parent baseline belongs to a different application build ("${parent.identity.applicationBuildId}" vs "${candidateIdentity.applicationBuildId}"). application build mismatch.`,
+    );
+  }
+
+  const parentDepth = parent.lineage?.depth ?? 0;
+  const rawAncestors = [parent.baselineId, ...parentAncestors];
+  const truncated = parent.lineage?.truncated === true || (parentDepth + 1) >= MAX_LINEAGE_DEPTH;
+  const depth = truncated ? Math.min(parentDepth + 1, MAX_LINEAGE_DEPTH) : parentDepth + 1;
+  const rootBaselineId = parent.lineage?.rootBaselineId ?? parent.baselineId;
+  const ancestors = truncated ? rawAncestors.slice(0, MAX_LINEAGE_DEPTH) : rawAncestors;
+
+  return {
+    valid: blockers.length === 0,
+    blockers,
+    lineage: {
+      parentBaselineId: parent.baselineId,
+      rootBaselineId,
+      depth,
+      ancestors,
+      truncated,
+    },
   };
 }
 

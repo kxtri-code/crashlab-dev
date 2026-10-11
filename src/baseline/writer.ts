@@ -17,6 +17,7 @@ import type { AnomalyReport } from '../anomaly/report.js';
 import type { ExecutionReport } from '../executor/types.js';
 import type { JourneyPlan } from '../journey/types.js';
 import { buildBaselineIdentity, toBaselineSignal } from './identity.js';
+import { validateBaselineId, validateParentBaseline } from './validator.js';
 import {
   BASELINE_REGISTRY_FILE,
   BASELINE_SCHEMA_VERSION,
@@ -50,6 +51,11 @@ export interface BaselineCreationRequest {
    * command and the source run actually carried an expectations file.
    */
   allowDeclaredExpectations?: boolean;
+  /**
+   * Build 7: optional parent baseline to descend from.
+   * If provided, must be compatible and cycle-free.
+   */
+  parentBaseline?: Baseline | null;
   /** Where baselines are stored. */
   baselineDir?: string;
   /** Injected in tests; defaults to now. */
@@ -67,6 +73,7 @@ export function baselinePathFor(baselineId: string, baselineDir: string = DEFAUL
  * Pure given its inputs, so the whole shape is testable without a filesystem.
  */
 export function buildBaseline(request: BaselineCreationRequest): Baseline {
+  validateBaselineId(request.baselineId);
   const accepted = new Set(request.acceptedSignalIds);
 
   const knownSignals = request.anomalies.anomalies
@@ -76,6 +83,19 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
     .filter((signal): signal is NonNullable<typeof signal> => signal !== null);
 
   const identity = buildBaselineIdentity(request.journey, request.execution);
+
+  // Build 7: parent baseline validation and lineage derivation
+  const parentValidation = validateParentBaseline(
+    request.baselineId,
+    identity,
+    request.parentBaseline ?? null,
+  );
+  if (!parentValidation.valid) {
+    throw new BaselineError(
+      `Refusing to create a baseline:\n${parentValidation.blockers.map((b) => `  - ${b}`).join('\n')}`,
+    );
+  }
+
   // Injected in tests so a baseline's createdAt is deterministic under test.
   const clock = request.now ?? ((): Date => new Date());
 
@@ -159,6 +179,8 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
         'A baseline is an operator assertion about a known-good state, not a defect verdict. ' +
         'Nothing in this document confirms or denies any bug.',
     },
+    parentBaselineId: parentValidation.lineage.parentBaselineId,
+    lineage: parentValidation.lineage,
   };
 }
 
@@ -237,6 +259,18 @@ export function validateBaselineDocument(value: unknown, path: string): Baseline
   if (!Array.isArray(record['knownSignals'])) {
     return fail('knownSignals must be an array.');
   }
+  if (record['parentBaselineId'] === undefined) {
+    record['parentBaselineId'] = null;
+  }
+  if (record['lineage'] === undefined) {
+    record['lineage'] = {
+      parentBaselineId: null,
+      rootBaselineId: record['baselineId'] as string,
+      depth: 0,
+      ancestors: [],
+      truncated: false,
+    };
+  }
   return value as unknown as Baseline;
 }
 
@@ -274,6 +308,11 @@ async function appendToRegistry(
     createdAt: baseline.createdAt,
     targetOrigin: baseline.identity.targetOrigin,
     environmentFingerprint: baseline.identity.environmentFingerprint,
+    journeyHash: baseline.identity.journeyHash,
+    parentBaselineId: baseline.parentBaselineId ?? null,
+    status: baseline.status,
+    verificationCoverage: baseline.verification.coverage,
+    applicationBuildId: baseline.identity.applicationBuildId ?? null,
   });
   // Sorted so the index does not depend on creation order.
   registry.baselines.sort((a, b) => a.baselineId.localeCompare(b.baselineId));

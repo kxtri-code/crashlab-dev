@@ -282,22 +282,36 @@ export type { ProvenanceFacts } from './provenance/reportMetadata.js';
 // Pure. No browser, no network, no database. Baseline and review read local
 // reports and write new ones; neither mutates an input.
 
-export { BASELINE_SCHEMA_VERSION, BaselineError, DEFAULT_BASELINE_DIR, BASELINE_REGISTRY_FILE } from './baseline/types.js';
+export { BASELINE_SCHEMA_VERSION, BaselineError, DEFAULT_BASELINE_DIR, BASELINE_REGISTRY_FILE, MAX_LINEAGE_DEPTH } from './baseline/types.js';
 export type {
   Baseline,
   BaselineConfirmation,
   BaselineIdentity,
+  BaselineLineage,
   BaselineSafety,
   BaselineSignal,
   BaselineSource,
   BaselineStatus,
   BaselineRegistry,
+  BaselineRegistryEntry,
 } from './baseline/types.js';
 export { buildBaselineIdentity, canonicalJourneyContent, journeyHash, signalKeyHash, toBaselineSignal } from './baseline/identity.js';
-export { validateBaselineCandidate, assertBaselineCandidate } from './baseline/validator.js';
-export type { BaselineValidationInput, BaselineValidationResult } from './baseline/validator.js';
+export { validateBaselineCandidate, assertBaselineCandidate, validateParentBaseline, validateBaselineId } from './baseline/validator.js';
+export type { BaselineValidationInput, BaselineValidationResult, ParentValidationResult } from './baseline/validator.js';
 export { buildBaseline, readBaseline, writeBaseline, readRegistry, baselinePathFor, validateBaselineDocument } from './baseline/writer.js';
 export type { BaselineCreationRequest } from './baseline/writer.js';
+export {
+  resolveBaselinePath,
+  filterAndSortBaselines,
+  listBaselines,
+  findLatestCompatibleBaseline,
+  loadBaselineAncestry,
+} from './baseline/registry.js';
+export type {
+  BaselineListFilters,
+  ListBaselinesOptions,
+  LatestCompatibleResult,
+} from './baseline/registry.js';
 
 export { REVIEW_SCHEMA_VERSION, DEFAULT_CANDIDATE_OUTPUT_PATH } from './review/types.js';
 export type {
@@ -306,6 +320,9 @@ export type {
   CandidateReport,
   CandidateSummary,
   CandidateClassification,
+  CandidateSelectionMode,
+  CandidateBaselineDecision,
+  BaselineHistoryEntry,
   ReviewComparison,
   ReviewStatus,
 } from './review/types.js';

@@ -13,7 +13,7 @@ import type { JourneyPlan, JourneyStep } from '../../src/journey/types.js';
 import type { ReproductionReport } from '../../src/reproducer/types.js';
 import { buildEnvironmentProvenance, toEnvironmentReference } from '../../src/provenance/reportMetadata.js';
 import { collectRuntimeProvenance } from '../../src/provenance/reportMetadata.js';
-import type { Baseline, BaselineIdentity, BaselineSignal } from '../../src/baseline/types.js';
+import type { Baseline, BaselineIdentity, BaselineLineage, BaselineSignal } from '../../src/baseline/types.js';
 import { buildBaselineIdentity, toBaselineSignal } from '../../src/baseline/identity.js';
 import { execStep, execution, journey } from './executionReports.js';
 import { signal } from './reproductionFixtures.js';
@@ -319,10 +319,13 @@ export function baselineOf(options: {
   signals?: BaselineSignal[];
   accepted?: string[];
   environmentFingerprint?: string | null;
+  parentBaselineId?: string | null;
+  lineage?: BaselineLineage;
 }): Baseline {
+  const baselineId = options.baselineId ?? 'good-v1';
   return {
     schemaVersion: '1.0',
-    baselineId: options.baselineId ?? 'good-v1',
+    baselineId,
     name: 'Fixture baseline',
     status: 'known-good',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -343,5 +346,13 @@ export function baselineOf(options: {
     safety: { safeTestMode: true, livePaymentAllowed: false, executionHadFailures: false, executionIncomplete: false },
     rationale: 'fixture baseline',
     interpretation: { confirmedBug: false, automaticSeverity: false, note: 'fixture' },
+    parentBaselineId: options.parentBaselineId ?? null,
+    lineage: options.lineage ?? {
+      parentBaselineId: options.parentBaselineId ?? null,
+      rootBaselineId: baselineId,
+      depth: 0,
+      ancestors: [],
+      truncated: false,
+    },
   };
 }
