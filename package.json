@@ -28,6 +28,7 @@
     "review-api": "tsx src/cli.ts review-api",
     "review-ui": "tsx src/cli.ts review-ui",
     "pilot-preflight": "tsx src/cli.ts pilot-preflight",
+    "pilot": "tsx src/cli.ts pilot",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

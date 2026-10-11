@@ -14,6 +14,7 @@ import { flagValue, scanArgs } from './args.js';
 import { loadPilotConfiguration, ConfigurationLoadError } from '../preflight/loader.js';
 import { validatePilotConfiguration, buildPreflightReport } from '../preflight/validator.js';
 import { formatPreflightSummary, writePreflightReport } from '../preflight/report.js';
+import { assertPilotReady, PilotExecutionGateError } from '../pilot/gate.js';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 
 export const PREFLIGHT_FLAGS = [
@@ -23,6 +24,7 @@ export const PREFLIGHT_FLAGS = [
   '--out',
   '-o',
   '--json',
+  '--check-execution-gate',
   '-h',
   '--help',
 ] as const;
@@ -37,12 +39,13 @@ Validates a protected pilot configuration against CrashLab safety invariants
 before any browser execution is permitted.
 
 Required:
-  -c, --config <path>    Path to pilot configuration file (.json or key-value format)
+  -c, --config <path>          Path to pilot configuration file (.json or key-value format)
 
 Options:
-  -o, --report <path>    Write JSON preflight report to file path
-  --json                 Print preflight report as JSON to stdout
-  -h, --help             Show this message
+  -o, --report <path>          Write JSON preflight report to file path
+  --json                       Print preflight report as JSON to stdout
+  --check-execution-gate       Explicitly verify the execution gate assertion
+  -h, --help                   Show this message
 
 Exit codes:
   0  Configuration is valid and safe for the declared environment
@@ -55,6 +58,7 @@ export interface ParsedPreflightArgs {
   configPath: string | null;
   reportPath: string | null;
   json: boolean;
+  checkExecutionGate: boolean;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -66,6 +70,7 @@ export function parsePreflightArgs(argv: readonly string[]): ParsedPreflightArgs
     configPath: null,
     reportPath: null,
     json: false,
+    checkExecutionGate: false,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter(
@@ -108,6 +113,7 @@ export function parsePreflightArgs(argv: readonly string[]): ParsedPreflightArgs
   }
 
   parsed.json = scan.flags.has('--json');
+  parsed.checkExecutionGate = scan.flags.has('--check-execution-gate');
 
   return parsed;
 }
@@ -152,6 +158,20 @@ export async function runPreflightCommand(argv: readonly string[]): Promise<numb
     console.log(formatPreflightSummary(report));
     if (args.reportPath) {
       console.log(`Report written to: ${args.reportPath}`);
+    }
+  }
+
+  if (args.checkExecutionGate) {
+    try {
+      assertPilotReady(result);
+      if (!args.json) {
+        console.log('EXECUTION GATE: CLEARED (Configuration is ready for execution).');
+      }
+    } catch (error) {
+      if (!args.json) {
+        console.error((error as Error).message);
+      }
+      return 1;
     }
   }
 

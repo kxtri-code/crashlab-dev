@@ -603,3 +603,25 @@ export {
   runPreflightCommand,
 } from './cli/preflightCommand.js';
 export type { ParsedPreflightArgs } from './cli/preflightCommand.js';
+
+// Build 10.3: Pilot Execution Gate & Runner
+export type {
+  PilotExecutionPlan,
+  PilotJourneyExecutionOptions,
+  PilotRunnerDependencies,
+  PilotRunnerOptions,
+  PilotRunResult,
+} from './pilot/types.js';
+export {
+  PilotExecutionGateError,
+  assertPilotReady,
+  createPilotExecutionPlan,
+} from './pilot/gate.js';
+export { runPilot } from './pilot/runner.js';
+export {
+  PILOT_USAGE,
+  PILOT_FLAGS,
+  parsePilotArgs,
+  runPilotCommand,
+} from './cli/pilotCommand.js';
+export type { ParsedPilotArgs } from './cli/pilotCommand.js';

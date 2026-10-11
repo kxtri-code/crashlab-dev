@@ -39,6 +39,9 @@ This repository contains five builds, with two integration milestones layered on
 - **Build 10.2 — Staging Pilot Configuration Validator** (`npm run pilot-preflight`):
   deterministic, local-only safety gate that validates protected pilot configurations
   before any browser execution is permitted.
+- **Build 10.3 — Enforce Preflight Gate Before Pilot Execution** (`npm run pilot`):
+  orchestrates pilot execution through the mandatory preflight safety gate, guaranteeing
+  zero browser launches and zero network activity whenever configuration is blocked or invalid.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -2461,3 +2464,59 @@ npm run pilot-preflight -- --help
 | **Authorization Ref** | Not required (local fixture) | **Strictly required** (ticket ID, approval ref) |
 | **Forbidden Actions** | Recommended | **Strictly required** (must cover payment, deletion, credentials) |
 | **Production Check** | Permitted for loopback fixtures | **Production hostnames strictly rejected** |
+
+---
+
+## Build 10.3: Pilot Preflight Execution Gate & Runner
+
+Build 10.3 integrates the Build 10.2 preflight validator as a **mandatory safety gate** before any future pilot browser execution.
+
+### The Central Safety Invariant
+
+> **No browser, Playwright context, page, navigation, or external network request may be created unless preflight validation returns `status: "ready"`.**
+
+### Execution Lifecycle
+
+The pilot runner enforces strict sequential execution:
+1. Parse CLI arguments (`--config`, `--preflight-only`, `--journey`, etc.)
+2. Load configuration from protected local storage
+3. Validate configuration against safety rules (`validatePilotConfiguration`)
+4. Check dry-run mode: if `--preflight-only` is active, stop immediately (0 browser launches, 0 network requests)
+5. Enforce safety gate (`assertPilotReady`): if status is `blocked` or `invalid`, stop immediately (0 browser launches)
+6. Construct frozen execution plan (`createPilotExecutionPlan`)
+7. Only then create a browser context and execute approved journeys
+
+### CLI Usage
+
+```bash
+# Safe validation-only dry run (guarantees zero browser launches)
+npm run pilot -- --config path/to/pilot.json --preflight-only
+
+# Verify execution gate clearance via preflight validator
+npm run pilot-preflight -- --config path/to/pilot.json --check-execution-gate
+
+# Execute against local synthetic fixture with approved journey plan
+npm run pilot -- --config path/to/local-pilot.json --journey reports/journey.json
+
+# Save preflight report alongside execution
+npm run pilot -- --config path/to/pilot.json --report reports/preflight.json
+
+# Display help
+npm run pilot -- --help
+```
+
+### Exit Codes
+
+| Exit Code | Meaning |
+| --- | --- |
+| **`0`** | Valid preflight (`status: ready`) or successful local synthetic run. |
+| **`1`** | Blocked or invalid safety configuration (`status: blocked` or `invalid`), or missing confirmation. |
+| **`2`** | CLI syntax error, missing argument, or unreadable configuration file. |
+
+### Safety Invariants & Limitations
+
+1. **Mandatory Execution Gate:** `assertPilotReady(preflightResult)` unconditionally throws `PilotExecutionGateError` if the configuration is not `ready`. Non-ready status cannot be overridden by CLI flags.
+2. **Blocked Run Guarantees:** Blocked or invalid configurations cause zero browser launches, zero network requests, no execution reports, and zero mutations to input files.
+3. **Staging Remains Blocked:** Testing external staging targets requires explicit written authorization and is blocked from browser execution in this build. Local synthetic execution is permitted only against local loopback fixtures (`127.0.0.1`).
+4. **Production Strictly Prohibited:** Production hostnames are rejected at preflight and can never reach browser execution.
+5. **No Secrets Handled:** Credentials and test data must remain in protected local storage (`test-data.local.json` or environment variables) and are never printed in refusal messages or committed to Git.

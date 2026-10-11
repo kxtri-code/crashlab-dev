@@ -429,3 +429,64 @@ npm run pilot-preflight -- --help
 3. **No Secret Handling:** Passwords, tokens, cookies, and secret values must never be placed in configuration files or committed to Git.
 4. **Zero Browser / Network Activity:** The validator contains zero Playwright or network imports.
 5. **Staging Remains Blocked:** Testing an external staging application requires explicit written authorization and protected local configuration supplied by the operator.
+
+---
+
+## Build 10.3 Checkpoint: Enforce Preflight Gate Before Pilot Execution
+
+A verified, hardened snapshot integrating the preflight configuration validator as a mandatory safety gate before any pilot browser execution.
+
+- **Checkpoint tag:** `build10.3-pilot-gate`
+- **Scope:** Execution gate assertion (`assertPilotReady`), execution plan factory (`createPilotExecutionPlan`), dependency-injected runner seam (`runPilot`), dry-run support (`--preflight-only`, `--check-execution-gate`), and CLI command (`npm run pilot`).
+- **Central Invariant:** No browser, Playwright context, page, navigation, or external network request may be created unless preflight validation returns `status: "ready"`.
+- **Safety Status:** Staging pilot remains **BLOCKED**. Zero external browser executions were performed.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,294 passed** (48 files) |
+| Unit test suite (`npm run test:unit`) | **1,127 passed** (38 files) |
+| Browser test suite (`npm run test:browser`) | **167 passed** (10 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Blocked configuration browser launches | **0** (strictly enforced by gate) |
+| Preflight-only network requests | **0** |
+| Playwright imports in preflight & gate | **0** |
+| Input report immutability | Byte-identical before and after evaluation |
+| Safe test mode | Payment blocking and screenshot omission preserved |
+
+### Architecture & Call Order
+
+```text
+1. Parse CLI Options / Parameters
+   ↓
+2. Load Configuration (protected local storage only)
+   ↓
+3. Pure Preflight Validation (validatePilotConfiguration)
+   ↓
+4. Dry-Run Check (--preflight-only / --check-execution-gate) → If active, STOP (0 browser launches)
+   ↓
+5. Mandatory Safety Gate (assertPilotReady) → If not 'ready', REFUSE & STOP (0 browser launches)
+   ↓
+6. Execution Plan Creation (createPilotExecutionPlan)
+   ↓
+7. Browser Execution (Only reached when status: "ready" and approved target)
+```
+
+### CLI Commands
+
+```bash
+# Preflight-only dry run (guarantees zero browser launches)
+npm run pilot -- --config <path> --preflight-only
+
+# Execution gate clearance test via preflight validator
+npm run pilot-preflight -- --config <path> --check-execution-gate
+
+# Execute against local synthetic fixture
+npm run pilot -- --config <path> --journey <path>
+```
+
+- **Exit Code 0:** Valid preflight (`status: ready`) or successful local synthetic run.
+- **Exit Code 1:** Blocked or invalid safety configuration (`status: blocked` or `invalid`).
+- **Exit Code 2:** CLI syntax error, missing argument, or unreadable file.

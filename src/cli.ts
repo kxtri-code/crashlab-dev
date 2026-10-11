@@ -30,6 +30,7 @@ import { REVIEW_STATE_USAGE, runReviewStateCommand } from './cli/reviewStateComm
 import { REVIEW_API_USAGE, runReviewApiCommand } from './cli/reviewApiCommand.js';
 import { REVIEW_UI_USAGE, runReviewUiCommand } from './cli/reviewUiCommand.js';
 import { PREFLIGHT_USAGE, runPreflightCommand } from './cli/preflightCommand.js';
+import { PILOT_USAGE, runPilotCommand } from './cli/pilotCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -66,6 +67,7 @@ Usage:
   npm run review-api -- --port 3210
   npm run review-ui -- --port 3211
   npm run pilot-preflight -- --config <path>
+  npm run pilot -- --config <path> --preflight-only
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -79,6 +81,7 @@ Commands:
   review-api     Start local read-only HTTP review API (Build 9.1)
   review-ui      Start local read-only browser review UI (Build 9.2)
   pilot-preflight Validate a protected pilot configuration (Build 10.2)
+  pilot          Run pilot execution gated by preflight safety checks (Build 10.3)
   help           Show this message
   version        Print the build version
 
@@ -406,6 +409,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runPreflightCommand(rest);
+  }
+
+  if (first === 'pilot') {
+    if (wantsHelp(rest)) {
+      console.log(PILOT_USAGE);
+      return 0;
+    }
+    return runPilotCommand(rest);
   }
 
   return main([...argv]);
