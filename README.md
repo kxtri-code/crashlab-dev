@@ -2279,3 +2279,66 @@ The UI operates as a fast, client-side hash-routed single-page application:
 - **XSS Prevention:** All values originating from candidate reports, user notes, rule IDs, and URLs are HTML-entity-escaped before insertion into the DOM.
 - **Path Traversal Protection:** Static asset server strictly confines file resolution and rejects any paths with traversal components or control characters.
 - **Localhost Binding:** Binds strictly to `127.0.0.1` by default to prevent unauthorized network exposure.
+
+---
+
+## Build 10: Controlled End-to-End Validation and Production-Readiness Audit
+
+Build 10 provides a controlled validation harness proving that CrashLab operates correctly across its complete, unbroken 11-stage architecture:
+
+```text
+Scout → Journey Plan → Execution → Anomaly Engine → Reproducer → Provenance → Baseline → Review → Review State → Read-Only API → Local Review UI
+```
+
+### Controlled Validation Matrix
+
+All validation scenarios are driven through deterministic, ephemeral `127.0.0.1` fixture servers without external dependencies:
+
+| Scenario | Route | Canonical Rule ID | Classification | Key Behavior Verified |
+| --- | --- | --- | --- | --- |
+| **A: Healthy Journey** | `/healthy` | *(none)* | *(clean)* | Zero anomaly signals, zero candidate defect leads, clean baseline established |
+| **B: HTTP 500** | `/scenario-500` | `HTTP_5XX` | `novel` | 5xx anomaly detection, deterministic candidate attribution, end-to-end traceability |
+| **C: HTTP 404** | `/scenario-404` | `HTTP_4XX` | `novel` | `possiblyExpected: true` preserved; candidate flagged honestly |
+| **D: JS Exception** | `/scenario-js-error` | `PAGE_ERROR` | `novel` | Uncaught exception captured, stack traces sanitized, matching normalized |
+| **E: Network Failure** | `/scenario-network-failure` | `NETWORK_REQUEST_FAILED` | `novel` | Connection drops distinct from HTTP errors; socket failures isolated |
+| **F: Step Timeout** | `/scenario-timeout` | `STEP_TIMEOUT` | `novel` | Timeout triggered only from explicit timed-out executor reason |
+| **G: Origin Change** | `/scenario-redirect` | `UNEXPECTED_ORIGIN` | `novel` | Unauthorized cross-origin navigation caught with `possiblyExpected: true` |
+| **H: Broken UI State** | `/scenario-broken-ui` | `TARGET_DISABLED_AFTER_ACTION` | `novel` | Disabled / missing controls captured cleanly with step failure attribution |
+| **I: Intermittent Failure** | `/scenario-intermittent` | `HTTP_5XX` | `unknown` | 1 of 3 recurrence falls below reproduction threshold (2/3); classified inconclusive |
+
+### Core Architectural Guarantees
+
+1. **Unbroken Real-Pipeline Execution:**
+   - Scout observes the fixture DOM and extracts actionable elements and forms.
+   - Journey Planner derives goal-oriented, verifiable multi-step paths.
+   - Executor navigates the local browser context and captures raw telemetry without retries.
+   - Anomaly Engine evaluates deterministic rules using canonical rule constants (`RULE_IDS`).
+   - Reproducer reruns eligible signals under bounded attempt budgets with fresh browser contexts.
+   - Provenance records target origins, journey hashes, and environment fingerprints.
+   - Baseline Registry maintains immutable, versioned reference records with ancestor lineage.
+   - Review Engine evaluates signal presence and lineage to classify findings (`novel`, `persistent`, `resolved`, `reintroduced`, `unknown`).
+   - Review State persists human decisions via append-only `events.jsonl` and rebuildable `state.json`.
+   - Read-Only Review API serves deterministic JSON projections bound to `127.0.0.1`.
+   - Local Review UI provides clean, 4-way visual separation and CLI command snippet generation.
+
+2. **Artifact-Chain Traceability & Identity:**
+   - Every candidate findings record (`cand-...`) explicitly correlates back to:
+     - Backing anomaly record (`anom-...`)
+     - Journey step execution order and intent
+     - Reproduction trial results and ratios
+     - Lineage comparison against selected baseline
+     - Human review event audit trail
+
+3. **Input and Evidence Immutability:**
+   - Analysis operations never mutate inputs. `journey.json`, `execution.json`, `anomalies.json`, `reproduction.json`, `candidates.json`, and all baseline files remain 100% byte-identical before and after evaluation.
+   - Verified via SHA-256 byte comparisons across single and repeated runs.
+
+4. **Trust Invariants & Bug Confirmation Boundaries:**
+   - Candidates are **never** automatically promoted to confirmed software bugs.
+   - `confirmedBug: false` and `confirmed: false` are structural, immutable invariants across all reports, API responses, and UI components.
+   - Human review decisions are recorded strictly via the `review-state` CLI.
+
+5. **Synthetic Local Fixture Disclaimer:**
+   - All validation scenarios execute against synthetic, local `127.0.0.1` fixture servers.
+   - Fixture signals represent controlled test evidence and must never be cited as production defects.
+   - Summaries generated by the harness (`validationSummary.ts`) are marked as synthetic validation evidence and written only to temporary test directories.

@@ -333,3 +333,41 @@ npm run review-ui -- --no-open
 
 - **Local-only:** Built for single-operator local use and headless CI inspections; no multi-user sessions, authorization tokens, or rate limiting.
 - **No mutations in browser:** Human review state updates must be executed via the `review-state` CLI.
+
+---
+
+## Build 10 Checkpoint: Controlled End-to-End Validation
+
+A stable, hardened, fully verified snapshot of the complete 11-stage CrashLab architecture.
+
+- **Checkpoint tag:** `build10-validation`
+- **Scope:** Complete end-to-end pipeline validation across 9 deterministic fixture scenarios (A through I) without external network, database, or AI dependencies.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,219 passed** (46 files) |
+| Unit test suite (`npm run test:unit`) | **1,052 passed** (36 files) |
+| Browser test suite (`npm run test:browser`) | **167 passed** (10 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Artifact chain traceability | Fully validated from candidate ID back to anomaly, journey step, reproduction, baseline, and review event |
+| Input and evidence immutability | Byte-identical before and after analysis (SHA-256 verified) |
+| Read-only guarantees | 100% GET/HEAD requests; 0 mutation methods |
+| Trust invariants | `confirmedBug: false` & `confirmed: false` across 100% of pipeline artifacts and views |
+
+### Architecture Contract & Invariants
+
+1. **Unbroken 11-Stage Pipeline:**
+   - Scout → Journey Plan → Execution → Anomaly Engine → Reproducer → Provenance → Baseline → Review → Review State → Read-Only API → Local Review UI.
+2. **Canonical Rule ID Integrity:**
+   - Strict reuse of canonical constants (`HTTP_5XX`, `HTTP_4XX`, `PAGE_ERROR`, `NETWORK_REQUEST_FAILED`, `STEP_TIMEOUT`, `UNEXPECTED_ORIGIN`, `TARGET_DISABLED_AFTER_ACTION`). Zero invented rule IDs.
+3. **Deterministic Reproduction:**
+   - Signals require recurrence across bounded, fresh-context attempts. Single recurrence (1 of 3) yields `inconclusive` reproduction and `unknown` classification.
+4. **Historical Lineage Proof:**
+   - Multi-tier ancestor traversal distinguishes `novel`, `persistent`, `resolved`, and `reintroduced` candidates without mutating baselines.
+5. **No Automatic Bug Confirmation:**
+   - Defect candidates remain triage leads for human review. Human transitions are performed append-only via the `review-state` CLI.
+6. **Ephemeral Fixture Isolation:**
+   - All tests bind strictly to `127.0.0.1` and clean up servers, browsers, pages, and temporary directories in teardown.
