@@ -518,3 +518,55 @@ export {
   runReviewApiCommand,
 } from './cli/reviewApiCommand.js';
 export type { ParsedReviewApiArgs } from './cli/reviewApiCommand.js';
+
+// --- Build 9.2: Local Browser Review UI ---------------------------------------
+export {
+  REVIEW_UI_VERSION,
+  DEFAULT_UI_PORT,
+  DEFAULT_UI_HOST,
+  DEFAULT_API_URL,
+} from './reviewUi/types.js';
+export type {
+  UiRoute,
+  UiState,
+  ReviewUiServerOptions,
+  RunningReviewUiServer,
+} from './reviewUi/types.js';
+export {
+  escapeHtml,
+  escapeAttr,
+  sanitizeUiUrl,
+  safeId,
+  formatTimestamp,
+} from './reviewUi/escape.js';
+export {
+  ReviewApiClient,
+  ReadOnlyApiError,
+} from './reviewUi/apiClient.js';
+export {
+  renderNavbar,
+  renderTopBanners,
+  renderClassificationBadge,
+  renderReviewStatusBadge,
+  renderReproductionBadge,
+  renderOverview,
+  renderCandidateList,
+  renderCandidateDetail,
+  renderCandidateHistory,
+  renderBaselineList,
+  renderBaselineDetail,
+  renderRuns,
+  renderError,
+  renderHtmlShell,
+} from './reviewUi/render.js';
+export {
+  createReviewUiServer,
+  handleUiRequest,
+} from './reviewUi/staticServer.js';
+export {
+  REVIEW_UI_USAGE,
+  REVIEW_UI_FLAGS,
+  parseReviewUiArgs,
+  runReviewUiCommand,
+} from './cli/reviewUiCommand.js';
+export type { ParsedReviewUiArgs } from './cli/reviewUiCommand.js';

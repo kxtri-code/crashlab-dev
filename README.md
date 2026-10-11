@@ -30,6 +30,9 @@ This repository contains five builds, with two integration milestones layered on
   human triage decisions separately in an append-only event log and deterministic projection.
 - **Build 9.1 — Read-Only Review API** (`npm run review-api`): local HTTP API exposing
   candidate defect reports, review-state history, baseline registries, and run context.
+- **Build 9.2 — Local Browser Review UI** (`npm run review-ui`): local browser interface
+  for reviewing candidate findings, consuming the read-only API with strict 4-way visual
+  separation, copyable CLI triage commands, and zero browser write mutations.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -2217,4 +2220,62 @@ Standard error codes:
 - **No authentication:** Intended for trusted local processes; access control is delegated to the host system.
 - **No database:** Reads directly from JSON/JSONL reports.
 - **Read-only:** Updating review states must still be done through the `review-state` CLI.
-- **No UI:** The web browser interface is deferred to Build 9.2.
+
+---
+
+## Build 9.2: Local Browser Review UI
+
+Build 9.2 provides a local, dependency-free browser interface for reviewing CrashLab candidate defect findings.
+
+It is strictly a presentation and inspection layer:
+- **Consumes Build 9.1 API:** The UI communicates only with the local Build 9.1 read-only HTTP API.
+- **Strictly read-only:** The UI client sends only `GET` and `HEAD` requests. Any attempt to send `POST`, `PUT`, `PATCH`, or `DELETE` is blocked client-side and rejected by the server with `405 Method Not Allowed`.
+- **Zero file mutation:** The UI never modifies, creates, or touches report files on disk. Input reports remain 100% byte-identical before and after review sessions.
+- **Human review workflow via CLI:** The UI does **not** perform write operations or update candidate review status directly. Instead, it generates an exact, copyable CLI command snippet (`npm run review-state`) for human operators to execute in their local terminal.
+- **Trust invariants:** Findings are always clearly labeled as review leads, not confirmed defects (`confirmedBug: false` and `confirmed: false`).
+
+### Startup and Configuration
+
+```bash
+# Start UI server with default API (http://127.0.0.1:3210) on http://127.0.0.1:3211
+npm run review-ui
+
+# Specify custom backing API URL
+npm run review-ui -- --api-url http://127.0.0.1:4000
+
+# Specify custom host and port for UI server
+npm run review-ui -- --host 127.0.0.1 --port 8080
+
+# Headless / CI mode: start without auto-launching system browser
+npm run review-ui -- --no-open
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--api-url <url>` | `http://127.0.0.1:3210` | Backing Review API base URL |
+| `--host <host>` | `127.0.0.1` | Local IP address for the UI server |
+| `--port <port>` | `3211` | Port number for the UI server |
+| `--no-open` | `false` | Do not automatically open default browser |
+| `--help` | | Show usage documentation |
+
+### Views and Navigation
+
+The UI operates as a fast, client-side hash-routed single-page application:
+- **Overview (`#/`):** High-level summary of findings, automatic classification breakdown, human review triage status counts, and prominent display of trust invariants and read-only mode.
+- **Candidate Findings (`#/candidates`):** Interactive, deterministically ordered table of candidate defect signals with multi-criteria filtering by classification, human review status, rule ID, and signal kind.
+- **Candidate Detail (`#/candidates/:id`):** Deep inspection view for a single finding with strict 4-way visual separation:
+  1. *Automatic Calculated Result:* Classifier verdict (`novel`, `reintroduced`, `persistent`, etc.), signal kind, rule ID, and reproduction recurrence status.
+  2. *Human Review State:* Current triage status (`open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`), active reviewer, notes, revision number, and update timestamp.
+  3. *Supporting Evidence & Provenance:* Anomaly message, selector context, stack/console excerpts, HTTP status codes, target URL, and environment fingerprints.
+  4. *Limitations & Invariants:* Visible disclosure that `confirmedBug: false`, `confirmed: false`, and that an anomaly signal is a triage lead rather than a proven software defect.
+- **Triage Helper / CLI Generator:** Provides an interactive transition form with status selection, reviewer name, and notes. Instantly generates a copyable command snippet with one-click clipboard copy feedback.
+- **Review History Timeline (`#/candidates/:id/history`):** Complete chronological audit trail of human triage decisions loaded from `events.jsonl`.
+- **Baseline Registry (`#/baselines`):** Registry listing of known-good reference states, target origins, and verification coverage levels.
+- **Run Context (`#/runs`):** Execution telemetry, step counts, verification status, and reproduction trial outcomes.
+
+### Security and Safety Guarantees
+
+- **No Remote Dependencies:** Built using Semantic HTML5, Vanilla CSS, and modern ES module JavaScript without third-party CDN scripts, analytics, or trackers.
+- **XSS Prevention:** All values originating from candidate reports, user notes, rule IDs, and URLs are HTML-entity-escaped before insertion into the DOM.
+- **Path Traversal Protection:** Static asset server strictly confines file resolution and rejects any paths with traversal components or control characters.
+- **Localhost Binding:** Binds strictly to `127.0.0.1` by default to prevent unauthorized network exposure.

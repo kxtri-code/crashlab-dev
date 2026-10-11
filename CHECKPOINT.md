@@ -263,4 +263,73 @@ Build 9.1 exposes CrashLab's candidate defect reports, automatic classifications
 - **Local-only:** Designed for single-operator local use and headless CI environments; no multi-user sessions, authorization tokens, or rate limiting.
 - **No database:** State is read directly from file-based artifacts on disk.
 - **Presentation-only:** Does not accept write mutations or state transitions; state mutations remain in the CLI `review-state` command.
-- **Future UI:** The web browser interface is deferred to Build 9.2.
+
+---
+
+# CrashLab — Build 9.2 Checkpoint
+
+A stable, verified snapshot of the completed Build 9.2 state: Local Browser Review UI.
+
+- **Checkpoint tag:** `build9.2-review-ui`
+- **Contract tag:** `review-ui-v1`
+- **Schema version:** `"1.0"`
+
+## Verification at checkpoint time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,201 passed** / 44 files |
+| Unit tests | **1,037 passed** (35 files) |
+| Browser tests | **164 passed** (9 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Read-only client network | zero mutation requests (`POST`, `PUT`, `PATCH`, `DELETE`); 100% `GET`/`HEAD` |
+| Read-only server enforcement | 405 Method Not Allowed with `Allow: GET, HEAD` on mutation requests |
+| Immutability | input reports remain 100% byte-identical before and after UI sessions |
+| XSS prevention | verified via Playwright: injected script and img payloads never execute |
+| Working tree | clean |
+
+## The Build 9.2 Contract (version "1.0")
+
+Build 9.2 provides a local, dependency-free browser interface (`npm run review-ui`) for reviewing CrashLab candidate defect findings by consuming the Build 9.1 read-only HTTP API.
+
+### Invariants and Boundaries
+
+1. **Read-only client guarantee:** The UI client adapter and browser runtime only issue `GET` and `HEAD` requests. Any write attempt throws immediately client-side and is rejected by the server with `405 Method Not Allowed`.
+2. **File and state immutability:** The UI server and client never create, update, delete, or touch any candidate, evidence, baseline, or review-state files. Backing files remain byte-identical.
+3. **No direct write operations:** The UI does not create, update, dismiss, resolve, or duplicate candidates.
+4. **Copyable CLI triage workflow:** To perform human review status transitions, the UI provides an interactive snippet generator that outputs copyable `npm run review-state` commands for the operator's terminal.
+5. **Strict 4-way visual separation on candidate detail:**
+   - Automatic Calculated Result (classifier label, rule ID, recurrence)
+   - Human Review State (triage status, reviewer, notes, timestamp)
+   - Supporting Evidence & Provenance (message, selector, excerpts, URL, fingerprints)
+   - Limitations & Invariants (`confirmedBug: false`, `confirmed: false`)
+6. **No confirmed bug claims:** Findings remain triage leads. Invariants `confirmedBug: false` and `confirmed: false` are prominently displayed on all candidate cards and overview headers.
+7. **No database, external network, or AI:** Zero runtime dependencies beyond Node.js built-ins. All assets are self-contained Semantic HTML5, Vanilla CSS, and modern ES module JavaScript.
+
+### CLI Commands
+
+```bash
+# Start UI server with default API (http://127.0.0.1:3210) on port 3211
+npm run review-ui
+
+# Configure custom API URL, host, or port
+npm run review-ui -- --api-url http://127.0.0.1:4000 --host 127.0.0.1 --port 8080
+
+# Headless / CI mode
+npm run review-ui -- --no-open
+```
+
+### Views
+
+- `#/`: System overview, key metrics, classification breakdown, and trust invariant badges.
+- `#/candidates`: Deterministically ordered table of candidate defect signals with interactive multi-filter controls.
+- `#/candidates/:id`: Candidate detail with strict 4-way visual separation and CLI triage snippet generator.
+- `#/candidates/:id/history`: Chronological audit trail of human triage decisions loaded from `events.jsonl`.
+- `#/baselines`: Known-good baseline registry inspection.
+- `#/runs`: Current execution and reproduction run telemetry and step counts.
+
+### Known Limitations
+
+- **Local-only:** Built for single-operator local use and headless CI inspections; no multi-user sessions, authorization tokens, or rate limiting.
+- **No mutations in browser:** Human review state updates must be executed via the `review-state` CLI.
