@@ -28,6 +28,8 @@ This repository contains five builds, with two integration milestones layered on
   reintroduced defects across application versions.
 - **Build 8 — Persistent Candidate Review State** (`npm run review-state`): records
   human triage decisions separately in an append-only event log and deterministic projection.
+- **Build 9.1 — Read-Only Review API** (`npm run review-api`): local HTTP API exposing
+  candidate defect reports, review-state history, baseline registries, and run context.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -2081,3 +2083,138 @@ npm run review-state -- --show candidate-001
 # Rebuild projection
 npm run review-state -- --rebuild
 ```
+
+---
+
+## Build 9.1: Read-Only Review API
+
+Build 9.1 introduces a safe, local, read-only HTTP API that exposes CrashLab's existing candidate and review information in a deterministic, human-readable form.
+
+The API is a **query and presentation layer only**:
+- It reads existing JSON artifacts without mutation.
+- It accepts `GET` and `HEAD` requests only.
+- Any mutation attempt (`POST`, `PUT`, `PATCH`, `DELETE`) is rejected with `405 Method Not Allowed` and an `Allow: GET, HEAD` header.
+- It never creates review events, rewrites baselines, launches browsers, or confirms bugs automatically (`confirmed: false` and `confirmedBug: false` are non-negotiable invariants).
+- Reading the API leaves all underlying evidence and review-state files 100% byte-identical.
+
+The browser user interface will be implemented in a future milestone, **Build 9.2**.
+
+### Startup and Configuration
+
+```bash
+# Start on default host (127.0.0.1) and port (3210)
+npm run review-api
+
+# Start on custom port
+npm run review-api -- --port 4000
+
+# Specify explicit backing paths
+npm run review-api -- \
+  --candidates reports/candidates.json \
+  --review-state reports/review-state \
+  --baselines reports/baselines \
+  --journey reports/journey.json \
+  --execution reports/execution.json \
+  --anomalies reports/anomalies.json \
+  --reproduction reports/reproduction.json \
+  --host 127.0.0.1 \
+  --port 3210
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--candidates <path>` | `reports/candidates.json` | Candidate defect report path |
+| `--review-state <dir>` | `reports/review-state` | Review state directory (`events.jsonl`, `state.json`) |
+| `--baselines <dir>` | `reports/baselines` | Baseline storage and index directory |
+| `--journey <path>` | `reports/journey.json` | Optional journey plan path |
+| `--execution <path>` | `reports/execution.json` | Optional execution report path |
+| `--anomalies <path>` | `reports/anomalies.json` | Optional anomaly report path |
+| `--reproduction <path>` | `reports/reproduction.json` | Optional reproduction report path |
+| `--host <host>` | `127.0.0.1` | Local IP address to bind |
+| `--port <port>` | `3210` | Port number to listen on |
+
+### API Routes
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Service health, version, and `readOnly: true` status |
+| `GET` | `/api/summary` | Candidate counts by classification and review status, baseline info, provenance |
+| `GET` | `/api/candidates` | Deterministically ordered list of candidate defects with filters and pagination |
+| `GET` | `/api/candidates/:id` | Candidate detail (accepts canonical `cand-...` or alias `candidate-NNN`) |
+| `GET` | `/api/candidates/:id/history` | Chronological event history for candidate review decisions |
+| `GET` | `/api/baselines` | Deterministically ordered list of baselines from registry |
+| `GET` | `/api/baselines/:id` | Baseline detail, verification coverage, lineage, and signals summary |
+| `GET` | `/api/runs/current` | Current execution run context summary |
+| `GET` | `/api/runs/reproduction` | Reproduction run results summary |
+
+### Query Filters and Pagination
+
+#### Candidate Filters (`GET /api/candidates`)
+- `classification`: Filter by automatic classification (`novel`, `reintroduced`, `persistent`, `resolved`, `changed`, `cross-environment`, `different-build`, `unknown`).
+- `reviewStatus`: Filter by human review status (`open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`).
+- `ruleId`: Filter by anomaly rule ID (e.g. `http-status-404`, `console-error`).
+- `kind`: Filter by signal kind (e.g. `http`, `console`, `timeout`).
+- `reproduced`: Boolean (`true` or `false`).
+- `environment`: Filter by environment comparison (`same-environment`, `different-environment`, `unknown-environment`, `different-build`, `incompatible-journey`, `no-baseline`).
+- `requiresInvestigation`: Boolean (`true` or `false`).
+- `baselinePresent`: Boolean (`true` or `false`).
+- `currentPresent`: Boolean (`true` or `false`).
+- `limit`: Bounded page size (1..100, default 50).
+- `offset`: Non-negative item offset (default 0).
+
+*Unknown query parameter names and invalid enum values are rejected with `400 Bad Request`.*
+
+#### Baseline Filters (`GET /api/baselines`)
+- `origin`: Target URL origin string.
+- `journey`: Journey plan hash.
+- `build`: Application build identifier.
+- `status`: Baseline status (`known-good`, `known-good-partial`, `known-good-declared`).
+- `coverage`: Verification coverage (`full-plan`, `executed-steps-only`, `operator-declared`).
+- `limit`: Bounded page size (1..100, default 50).
+- `offset`: Non-negative item offset (default 0).
+
+### Response and Error Format
+
+All responses use JSON with the following headers:
+```http
+Content-Type: application/json; charset=utf-8
+Cache-Control: no-store
+```
+
+Successful responses return structured data with deterministic key sorting. Errors return structured JSON:
+```json
+{
+  "error": {
+    "code": "candidate-not-found",
+    "message": "Candidate \"cand-123\" was not found.",
+    "details": {
+      "candidateId": "cand-123"
+    }
+  }
+}
+```
+
+Standard error codes:
+- `candidate-not-found` (404)
+- `baseline-not-found` (404)
+- `not-found` (404)
+- `method-not-allowed` (405)
+- `invalid-query` (400)
+- `invalid-path` (400)
+- `invalid-pagination` (400)
+- `internal-error` (500)
+
+### Security and Path Safety
+
+- **Local binding:** Binds to `127.0.0.1` by default. Never binds to public interfaces unless explicitly requested.
+- **Path traversal prevention:** URL segments containing `..`, null bytes, control characters, or path separators are rejected with `400 Bad Request`.
+- **Privacy & redaction:** Absolute filesystem paths, machine paths, environment variables, credentials, test data secrets, and passwords are never exposed in HTTP responses.
+- **No mutations:** Read requests cannot modify any files or execute commands.
+
+### Known Limitations
+
+- **Local-only:** Built for local single-operator triage and headless CI inspections; no public deployment features.
+- **No authentication:** Intended for trusted local processes; access control is delegated to the host system.
+- **No database:** Reads directly from JSON/JSONL reports.
+- **Read-only:** Updating review states must still be done through the `review-state` CLI.
+- **No UI:** The web browser interface is deferred to Build 9.2.

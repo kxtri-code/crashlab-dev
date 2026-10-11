@@ -27,6 +27,7 @@ import { REPRODUCE_USAGE, runReproduceCommand } from './cli/reproduceCommand.js'
 import { BASELINE_USAGE, runBaselineCommand } from './cli/baselineCommand.js';
 import { REVIEW_USAGE, runReviewCommand } from './cli/reviewCommand.js';
 import { REVIEW_STATE_USAGE, runReviewStateCommand } from './cli/reviewStateCommand.js';
+import { REVIEW_API_USAGE, runReviewApiCommand } from './cli/reviewApiCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -60,6 +61,7 @@ Usage:
   npm run baseline -- --baseline-id <id> --confirm-known-good
   npm run review -- --baseline reports/baselines/<id>.json
   npm run review-state -- --candidate <id> --status investigating
+  npm run review-api -- --port 3210
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -70,6 +72,7 @@ Commands:
   baseline       Record an explicit known-good state (Build 6)
   review         Compare a run against a baseline for candidate defects (Build 6)
   review-state   Record persistent human review decisions for candidates (Build 8)
+  review-api     Start local read-only HTTP review API (Build 9.1)
   help           Show this message
   version        Print the build version
 
@@ -373,6 +376,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runReviewStateCommand(rest);
+  }
+
+  if (first === 'review-api') {
+    if (wantsHelp(rest)) {
+      console.log(REVIEW_API_USAGE);
+      return 0;
+    }
+    return runReviewApiCommand(rest);
   }
 
   return main([...argv]);

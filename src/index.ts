@@ -438,3 +438,83 @@ export {
   DEFAULT_REPRODUCTION_OUTPUT_PATH,
   REPRODUCTION_NOTE,
 } from './reproducer/reproductionReport.js';
+
+// --- Build 9.1: Read-Only Review API --------------------------------------
+// Pure query layer, deterministic serialization, and read-only HTTP server adapter.
+export {
+  REVIEW_API_SCHEMA_VERSION,
+} from './reviewApi/types.js';
+export type {
+  ApiErrorResponse,
+  ApiHealthResponse,
+  ApiSummaryResponse,
+  ApiCandidateListItem,
+  ApiCandidatesListResponse,
+  ApiCandidateDetailResponse,
+  ApiCandidateHistoryResponse,
+  ApiReviewHistoryEvent,
+  ApiBaselineListItem,
+  ApiBaselinesListResponse,
+  ApiBaselineDetailResponse,
+  ApiRunContextResponse,
+  ReviewApiPaths,
+  ReviewApiServerOptions,
+  CandidateQueryFilters,
+  BaselineQueryFilters,
+} from './reviewApi/types.js';
+export {
+  ApiError,
+  notFoundError,
+  candidateNotFoundError,
+  baselineNotFoundError,
+  methodNotAllowedError,
+  invalidQueryError,
+  invalidPathError,
+  invalidPaginationError,
+  serviceUnavailableError,
+  internalServerError,
+  formatApiError,
+} from './reviewApi/errors.js';
+export {
+  validateCandidateIdRoute,
+  validateBaselineIdRoute,
+  validatePagination,
+  validateCandidateFilters,
+  validateBaselineFilters,
+  validateHost,
+  validatePort,
+} from './reviewApi/validator.js';
+export {
+  canonicalJsonStringify,
+} from './reviewApi/serialization.js';
+export {
+  loadReviewApiData,
+  ArtifactLoadError,
+} from './reviewApi/loader.js';
+export type { ReviewApiData } from './reviewApi/queries.js';
+export {
+  querySummary,
+  queryCandidates,
+  queryCandidateDetail,
+  queryCandidateHistory,
+  queryBaselines,
+  queryBaselineDetail,
+  queryCurrentRunContext,
+  queryReproductionRunContext,
+  sortCandidates,
+  sortBaselines,
+  sortReviewEvents,
+  findCandidate,
+} from './reviewApi/queries.js';
+export {
+  createReviewApiServer,
+  handleRequest,
+} from './reviewApi/server.js';
+export type { RunningReviewApiServer } from './reviewApi/server.js';
+export {
+  REVIEW_API_USAGE,
+  REVIEW_API_FLAGS,
+  parseReviewApiArgs,
+  runReviewApiCommand,
+} from './cli/reviewApiCommand.js';
+export type { ParsedReviewApiArgs } from './cli/reviewApiCommand.js';

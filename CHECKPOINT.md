@@ -198,3 +198,69 @@ reports/review-state/
 - **Local single-process MVP:** Designed for file-based local or CI execution. Concurrency is guarded by optimistic revision continuity checks, but multi-user concurrent writes require filesystem coordination.
 - **Natural-language notes:** Notes are free-text operator comments and are never parsed as evidence or automated test verdicts.
 - **No ticketing integration:** Build 8 records state locally in JSON/JSONL without external ticketing or issue tracker sync.
+
+---
+
+# CrashLab — Build 9.1 Checkpoint
+
+A stable, verified snapshot of the completed Build 9.1 state: Read-Only Review API.
+
+- **Checkpoint tag:** `build9.1-review-api`
+- **Contract tag:** `review-api-v1`
+- **Schema version:** `"1.0"`
+
+## Verification at checkpoint time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,169 passed** / 39 files |
+| Unit tests | **1,013 passed** (31 files) |
+| Browser tests | **156 passed** (8 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Immutability | byte-identical across execution, journey, anomalies, reproduction, candidates, baselines, and review-state |
+| Determinism | byte-identical SHA-256 response bodies across 3 repeated runs for all API routes |
+| Working tree | clean |
+
+## The Build 9.1 Contract (version "1.0")
+
+Build 9.1 exposes CrashLab's candidate defect reports, automatic classifications, human review states, event history, baseline registries, and run context over a safe, local, deterministic HTTP API (`npm run review-api`).
+
+### Invariants and Boundaries
+
+1. **Read-only enforcement:** Accepts only `GET` and `HEAD` requests. Any mutation attempt (`POST`, `PUT`, `PATCH`, `DELETE`) returns `405 Method Not Allowed` with an `Allow: GET, HEAD` header.
+2. **Strict separation:** Automatic classification, observations, and human review status remain strictly distinct.
+3. **No bug confirmation:** `confirmedBug: false` and `confirmed: false` remain false across all candidate records, summaries, baselines, and history responses.
+4. **Evidence & state immutability:** Serving requests never modifies, creates, or deletes any files in `reports/` or filesystem artifacts.
+5. **No execution:** The API never executes browser actions, launches journeys, or interacts with remote targets.
+6. **No database or external network:** Operates solely over local JSON/JSONL reports; never calls external networks or AI models.
+7. **Deterministic output:** Identical backing artifacts and request queries produce byte-identical responses via recursive key sorting.
+
+### Implemented Routes
+
+| Route | Method | Description |
+| --- | --- | --- |
+| `/health` | `GET`, `HEAD` | Health check (`ok: true`, `service: "crashlab-review-api"`, `readOnly: true`, `schemaVersion: "1.0"`) |
+| `/api/summary` | `GET`, `HEAD` | Aggregated candidate summary counts, baseline summary, and provenance |
+| `/api/candidates` | `GET`, `HEAD` | Paginated and filtered candidate defect list, deterministically ordered |
+| `/api/candidates/:id` | `GET`, `HEAD` | Candidate detail (canonical `cand-...` or positional `candidate-NNN`) |
+| `/api/candidates/:id/history` | `GET`, `HEAD` | Candidate review event history (`unreviewed: true` if unreviewed) |
+| `/api/baselines` | `GET`, `HEAD` | Paginated and filtered baseline registry entries |
+| `/api/baselines/:id` | `GET`, `HEAD` | Detailed baseline document projection |
+| `/api/runs/current` | `GET`, `HEAD` | Current run execution context summary |
+| `/api/runs/reproduction` | `GET`, `HEAD` | Reproduction run context summary |
+
+### Security Boundaries
+
+- Binds to `127.0.0.1` by default; requires explicit configuration for custom addresses.
+- URL parameters validated against strict regexes (`[A-Za-z0-9._-]+`); path traversal sequences (`..`), slashes, backslashes, control characters, and null bytes are rejected with `400 Bad Request`.
+- Redaction utilities ensure no absolute file paths, passwords, bearer tokens, or sensitive values leak into HTTP responses.
+- Unknown query parameter names and invalid enum values return `400 Bad Request`.
+- Structured error format: `{ "error": { "code": string, "message": string, "details"?: object } }`.
+
+### Known Limitations
+
+- **Local-only:** Designed for single-operator local use and headless CI environments; no multi-user sessions, authorization tokens, or rate limiting.
+- **No database:** State is read directly from file-based artifacts on disk.
+- **Presentation-only:** Does not accept write mutations or state transitions; state mutations remain in the CLI `review-state` command.
+- **Future UI:** The web browser interface is deferred to Build 9.2.
