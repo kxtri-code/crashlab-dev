@@ -53,6 +53,8 @@ export async function runAttempt(input: ReproductionInput, attempt: number): Pro
       planPath: input.journeyPath,
       // The same data for every attempt, so conditions are held constant.
       testData: input.testData,
+      // Build 6.5: the same operator-declared expectations for every attempt.
+      expectations: input.expectations,
       timeoutMs: input.timeoutMs,
       headed: input.headed,
       // Every attempt is independent by design, so a failure in one must not

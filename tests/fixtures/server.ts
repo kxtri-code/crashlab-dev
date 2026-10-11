@@ -39,6 +39,30 @@ function fixtureResponse(pathname: string): { status: number; type: string; body
   if (pathname === '/catalog') {
     return { status: 200, type: 'text/html; charset=utf-8', body: 'catalog placeholder' };
   }
+  if (pathname === '/spa-form') {
+    return {
+      status: 200,
+      type: 'text/html; charset=utf-8',
+      body: `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>SPA Form - CrashLab Fixture</title></head>
+<body>
+  <h1>SPA Form</h1>
+  <form id="spa-form" data-testid="spa-form">
+    <label for="query">Query</label>
+    <input id="query" name="query" type="text" data-testid="query" />
+    <button type="submit" id="spa-submit" data-testid="spa-submit">Submit via JS</button>
+  </form>
+  <script>
+    document.getElementById('spa-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      window.location.href = '/thank-you';
+    });
+  </script>
+</body>
+</html>`,
+    };
+  }
   return { status: 404, type: 'text/plain; charset=utf-8', body: 'fixture route not found' };
 }
 

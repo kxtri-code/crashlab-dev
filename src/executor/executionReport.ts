@@ -21,7 +21,9 @@ import type {
 } from './types.js';
 import { EXECUTION_SCHEMA_VERSION } from './types.js';
 import type { ExecutionVerification } from './types.js';
-import type { EnvironmentProvenance } from '../provenance/types.js';import { buildVerification, deriveExecutionStatus } from './verification.js';
+import type { EnvironmentProvenance } from '../provenance/types.js';
+import { buildVerification, deriveExecutionStatus } from './verification.js';
+import { hashExpectationsFile } from './expectations.js';
 import { TOOL_VERSION } from '../version.js';
 
 /** Tally per-step statuses. */
@@ -88,8 +90,9 @@ export function buildExecutionReport(input: {
       title: input.plan.target.title,
     },
     status: input.status ?? deriveExecutionStatus(input.steps, input.aborted),
-    verification: input.verification ?? buildVerification(input.steps, input.aborted),
-    startedAt: input.startedAt,    finishedAt: input.finishedAt,
+    verification: input.verification ?? buildVerification(input.steps, input.aborted, input.options.expectations !== undefined),
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
     durationMs: input.durationMs,
     stepCounts: countSteps(input.steps),
     steps: input.steps,
@@ -101,6 +104,8 @@ export function buildExecutionReport(input: {
     // records `null`, which downstream reads as "unknown" rather than
     // inventing an environment.
     environment: input.environment ?? null,
+    // Build 6.5: expectation file hash for provenance and reproduction consistency.
+    expectationFileHash: input.options.expectations ? hashExpectationsFile(input.options.expectations) : null,
     executor: {
       mode: 'deterministic',
       version: TOOL_VERSION,

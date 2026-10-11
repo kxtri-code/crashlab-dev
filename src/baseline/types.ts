@@ -29,8 +29,14 @@ export const BASELINE_SCHEMA_VERSION = '1.0';
  * can be entirely healthy and still be only partially verified. Recording such
  * a run as fully verified would claim an expectation was proven; refusing it
  * would mean no generated journey could ever become a baseline.
+ *
+ * `known-good-declared` (Build 6.5) exists for a different case: a SPA/JS
+ * journey whose expectations are operator-declared in `expectations.json`.
+ * Such a baseline is fully verified *for what it declared*, never
+ * `known-good` in the unverified sense - the coverage stamp is
+ * `operator-declared`, which is honest about the trust model.
  */
-export type BaselineStatus = 'known-good' | 'known-good-partial';
+export type BaselineStatus = 'known-good' | 'known-good-partial' | 'known-good-declared';
 
 /**
  * What was actually verified when the baseline was created.
@@ -40,7 +46,7 @@ export type BaselineStatus = 'known-good' | 'known-good-partial';
  */
 export interface BaselineVerification {
   complete: boolean;
-  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'operator-declared' | 'unavailable';
   unverifiedAssertions: number;
   /** True only when the operator passed --allow-unverified-assertions. */
   operatorApproved: boolean;

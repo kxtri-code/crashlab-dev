@@ -210,6 +210,16 @@ export function buildReproductionReport(input: ReproductionInput, attempts: read
       attemptsBlocked: blocked.length,
       attemptsFailed: failed.length,
     },
+    // Build 6.5: expectations metadata, when operator-declared expectations
+    // were used. The hash is recorded so a reader can verify which file was
+    // used without inlining its contents.
+    expectations: input.expectations
+      ? {
+          journeyPlanHash: input.expectations.journeyPlanHash,
+          expectationCount: input.expectations.expectations.length,
+          source: 'operator-declared',
+        }
+      : null,
     interpretation: {
       // Build 5 confirms nothing automatically.
       confirmedBug: false,
@@ -243,6 +253,9 @@ export function summarizeReproductionReport(report: ReproductionReport): string 
   lines.push(row('Goal:', report.goal || '(empty)'));
   lines.push(row('Anomalies:', report.anomalyReport));
   lines.push(row('Journey:', report.journeyReport));
+  if (report.expectations) {
+    lines.push(row('Expectations:', `${report.expectations.expectationCount} operator-declared`));
+  }
   lines.push('');
 
   lines.push('ATTEMPTS');

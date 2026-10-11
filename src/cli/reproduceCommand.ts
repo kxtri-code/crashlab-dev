@@ -38,6 +38,7 @@ import { sanitizeAppBuildId, sanitizeDataId, sanitizeEnvironmentId } from '../pr
 import type { ProvenanceInput } from '../provenance/types.js';
 import { readFile } from 'node:fs/promises';
 import { TOOL_NAME, TOOL_VERSION } from '../version.js';
+import { loadExpectationsFile } from '../executor/expectations.js';
 
 /** Default artifact directory for rerun reports. */
 export const DEFAULT_REPRODUCTION_DIR = 'reports/reproduction';
@@ -60,6 +61,8 @@ export const REPRODUCE_FLAGS = [
   '--app-build-id',
   '--data-id',
   '--hash-test-data',
+  // Build 6.5: operator-declared expectations.
+  '--expectations',
 ] as const;
 
 /** Parsed `reproduce` arguments. Pure, so it is unit-testable. */
@@ -78,6 +81,8 @@ export interface ParsedReproduceArgs {
   provenance: ProvenanceInput;
   /** Read the test-data file's bytes so its hash can be recorded. */
   hashTestData: boolean;
+  /** Build 6.5: optional operator-declared expectations for SPA/JS flows. */
+  expectationsPath: string | null;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -98,6 +103,7 @@ export function parseReproduceArgs(argv: readonly string[]): ParsedReproduceArgs
     confirmAuthorized: false,
     provenance: {},
     hashTestData: false,
+    expectationsPath: null,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter((flag) => !(REPRODUCE_FLAGS as readonly string[]).includes(flag)),
@@ -128,6 +134,8 @@ export function parseReproduceArgs(argv: readonly string[]): ParsedReproduceArgs
   if (data !== null) parsed.dataPath = data;
   const output = requireValue(['--output', '--out', '-o']);
   if (output !== null) parsed.outputPath = output;
+  const expectations = requireValue(['--expectations']);
+  if (expectations !== null) parsed.expectationsPath = expectations;
 
   const attempts = flagValue(scan, ['--attempts']);
   if (attempts.present) {
@@ -217,6 +225,9 @@ Options:
   --app-build-id <id>      Short safe application build id (Build 5.1)
   --data-id <id>           Short safe test-data fixture id (Build 5.1)
   --hash-test-data         Also record a SHA-256 of the fixture file
+  --expectations <path>    Build 6.5: operator-declared expectations for
+                           SPA/JS flows. The same file is used for every
+                           attempt, so conditions are held constant.
   --confirm-authorized     REQUIRED. Confirms you are authorized to test the
                            target. Without it nothing is opened and nothing
                            is written.
@@ -277,6 +288,18 @@ export async function runReproduceCommand(argv: readonly string[]): Promise<numb
     }
   }
 
+  // Build 6.5: operator-declared expectations are loaded and validated before
+  // any browser opens. The same file is used for every attempt.
+  let expectations;
+  if (args.expectationsPath !== null) {
+    try {
+      expectations = await loadExpectationsFile(args.expectationsPath, loaded.journey);
+    } catch (error) {
+      console.error(`Cannot reproduce: ${(error as Error).message}`);
+      return 1;
+    }
+  }
+
   // The original execution report is referenced but never rewritten. When it
   // sits beside the others it is named, so the report can point a reader at it.
   const executionPath = resolve(process.cwd(), 'reports', 'execution.json');
@@ -300,6 +323,7 @@ export async function runReproduceCommand(argv: readonly string[]): Promise<numb
       anomalies: loaded.anomalies,
       journey: loaded.journey,
       testData,
+      expectations,
       attempts: args.attempts,
       authorized: true,
       anomalyPath: args.anomalyPath,

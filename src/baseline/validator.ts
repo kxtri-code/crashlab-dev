@@ -45,6 +45,12 @@ export interface BaselineValidationInput {
    * carrying unverified assertions is refused rather than quietly downgraded.
    */
   allowUnverifiedAssertions?: boolean;
+  /**
+   * Build 6.5: whether the operator allowed a run that used operator-declared
+   * expectations. Required when the source execution carries an
+   * `expectationFileHash`; without it the baseline is refused.
+   */
+  allowDeclaredExpectations?: boolean;
   /** Paths, echoed into any error so the operator knows which file. */
   paths?: { execution: string; anomalies: string; journey: string };
 }
@@ -163,6 +169,21 @@ export function validateBaselineCandidate(input: BaselineValidationInput): Basel
   // --- verification ------------------------------------------------------
   const verification = input.execution.verification ?? null;
   let partial = false;
+
+  // Build 6.5: a run that used operator-declared expectations is only
+  // baseline-eligible when the operator explicitly allowed them. The
+  // expectationFileHash on the execution report is the signal that an
+  // expectations file was used.
+  const usedDeclaredExpectations =
+    input.execution.expectationFileHash !== null && input.execution.expectationFileHash !== undefined;
+
+  if (usedDeclaredExpectations && input.allowDeclaredExpectations !== true) {
+    blockers.push(
+      'The source execution used operator-declared expectations (expectationFileHash is present), ' +
+        'so a baseline requires --allow-declared-expectations. Operator-declared expectations are ' +
+        'a separate trust model and must be explicitly approved.',
+    );
+  }
 
   if (verification === null) {
     // A legacy report. It can still become a baseline, but nothing is claimed

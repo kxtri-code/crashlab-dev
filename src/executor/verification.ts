@@ -35,10 +35,12 @@ function tally(steps: readonly StepExecutionResult[]): Record<StepStatus, number
  * Build the verification record for a finished run.
  *
  * @param aborted whether execution stopped before the plan was processed.
+ * @param hasOperatorExpectations whether operator-declared expectations were used.
  */
 export function buildVerification(
   steps: readonly StepExecutionResult[],
   aborted: boolean,
+  hasOperatorExpectations: boolean = false,
 ): ExecutionVerification {
   const counts = tally(steps);
   // An unverified assertion is a skipped step that says so explicitly. A step
@@ -72,7 +74,10 @@ export function buildVerification(
     coverage = 'executed-steps-only';
   } else {
     status = 'complete';
-    coverage = 'full-plan';
+    // When operator-declared expectations are in use, coverage is
+    // 'operator-declared', never 'full-plan'. This honestly reflects that the
+    // verification came from operator declaration, not Scout-derived evidence.
+    coverage = hasOperatorExpectations ? 'operator-declared' : 'full-plan';
   }
 
   return {

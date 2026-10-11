@@ -20,6 +20,7 @@ import type { JourneyPlan } from '../journey/types.js';
 import type { Anomaly } from '../anomaly/types.js';
 import type { AnomalyReport } from '../anomaly/report.js';
 import type { ProvenanceInput } from '../provenance/types.js';
+import type { ExpectationsFile } from '../executor/expectations.js';
 
 /** Reproduction report schema version. */
 export const REPRODUCTION_SCHEMA_VERSION = '1.0';
@@ -239,6 +240,17 @@ export interface ReproductionReport {
   results: ReproductionResult[];
   safety: SafetySummary;
   reproducer: ReproducerMeta;
+  /**
+   * Build 6.5: operator-declared expectations metadata, when an expectations
+   * file was used. Null when no expectations were declared. The hash is
+   * recorded so a reader can verify which file was used without inlining its
+   * contents.
+   */
+  expectations: {
+    journeyPlanHash: string;
+    expectationCount: number;
+    source: 'operator-declared';
+  } | null;
   interpretation: ReproductionInterpretation;
 }
 
@@ -277,6 +289,12 @@ export interface ReproductionInput {
   provenance?: ProvenanceInput;
   /** Test-data fixture bytes, hashed only when `provenance.hashTestData` is set. */
   testDataFixtureHashSource?: Uint8Array;
+  /**
+   * Build 6.5: operator-declared expectations forwarded to every attempt so
+   * conditions are held constant across reruns. Undefined when no
+   * expectations file was supplied.
+   */
+  expectations?: ExpectationsFile;
 }
 
 /** A validation failure that must stop before any browser opens. */

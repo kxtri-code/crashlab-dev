@@ -290,6 +290,7 @@ export function reproductionWith(
       attemptsBlocked: 0,
       attemptsFailed: 0,
     },
+    expectations: null,
     interpretation: {
       confirmedBug: false,
       reproducedSignalsAreCandidatesOnly: true,

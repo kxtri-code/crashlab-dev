@@ -1854,6 +1854,102 @@ in the plan's assumptions, so a reader can tell a *removed* placeholder from an
 Build 6.4 adds no AI. The decision is a pure rule over the plan's own steps, with
 no natural-language interpretation.
 
+## Build 6.5: Operator-Declared Expectations for SPA/JS Flows
+
+Modern JavaScript and single-page applications often do not expose destinations to
+Scout. A form may have no `action` attribute, JavaScript may intercept submission,
+`fetch` or `XMLHttpRequest` may send data without navigation, `history.pushState`
+may change the URL without a page load, and success may be a DOM state change
+rather than a route. In all of these cases, CrashLab cannot honestly derive a
+postcondition from Scout evidence.
+
+Build 6.5 adds an external, typed expectation configuration
+(`reports/expectations.json`) where operators explicitly declare postconditions
+for these flows. This is a **separate trust model** from Scout-observed evidence:
+operator-declared expectations are never merged with, or presented as, Scout
+observations.
+
+### File format
+
+```json
+{
+  "schemaVersion": "1.0",
+  "journeyPlanHash": "sha256:...",
+  "expectations": [
+    {
+      "id": "exp-001",
+      "afterStepId": "step-1",
+      "type": "url-path",
+      "expectedPath": "/success",
+      "match": "exact",
+      "source": "operator-declared",
+      "reason": "SPA success route after form submission"
+    }
+  ]
+}
+```
+
+### Supported types
+
+- `url-path` — checks the page path after the step. Supports `exact` and
+  `starts-with` match modes.
+- `url-origin` — checks the page origin after the step. Supports only `exact`.
+
+### Validation rules
+
+- Only `source: "operator-declared"` is accepted. Scout-observed, evidence-backed,
+  automatically-derived, and confirmed sources are rejected.
+- Expectations bind to the exact journey hash (`journeyHash(journey.json)`).
+- Each expectation must reference an actionable step (`click`, `submit`, or
+  `navigate`).
+- Rejected paths: UUID/ULID paths, date-generated paths, long random tokens,
+  secret-bearing paths, unresolved placeholders, credentials, cross-origin
+  destinations, and payment-related expectations.
+
+### CLI integration
+
+```bash
+# Execute with operator-declared expectations
+npm run execute -- --journey reports/journey.json --expectations reports/expectations.json --confirm-authorized
+
+# Reproduce with the same expectations across all attempts
+npm run reproduce -- --anomalies reports/anomalies.json --journey reports/journey.json --expectations reports/expectations.json --confirm-authorized
+
+# Create a baseline from a run that used declared expectations
+npm run baseline -- --execution reports/execution.json --anomalies reports/anomalies.json --journey reports/journey.json --baseline-id spa-baseline --confirm-known-good --allow-declared-expectations
+```
+
+### Baseline behavior
+
+A baseline created from a run that used operator-declared expectations requires
+both `--confirm-known-good` and `--allow-declared-expectations`. The baseline
+status becomes `known-good-declared`, and coverage is recorded as
+`operator-declared`, never `full-plan`. This honestly reflects that the
+verification came from operator declaration, not from Scout-derived evidence.
+
+### Reproduction behavior
+
+When `--expectations` is supplied to the reproduce command, the same expectations
+file is used for every attempt, so conditions are held constant across reruns.
+The reproduction report records the expectations metadata (journey plan hash,
+expectation count, and source) so a reader can verify which configuration was
+used.
+
+### Safety rules
+
+An expectation is an observation target, not permission to execute an action.
+Operator-declared expectations do not authorize any new behavior: they only
+describe what to check after an action the journey plan already performs. The
+executor still enforces all existing safety guards (safe test mode, payment
+blocks, origin policy) regardless of what expectations declare.
+
+### Provenance and redaction
+
+The execution report records `expectationFileHash` (SHA-256 over the canonical
+expectations content) for provenance and reproduction consistency. The hash is
+deterministic and order-independent due to canonicalization. No expectation
+content is inlined into the report; only the hash and count are recorded.
+
 ## Next build
 
 Builds 1-6 complete the deterministic path: **map -> plan -> execute -> classify ->

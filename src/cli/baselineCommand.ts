@@ -36,6 +36,7 @@ export const BASELINE_FLAGS = [
   '--confirmed-by',
   '--confirm-known-good',
   '--allow-unverified-assertions',
+  '--allow-declared-expectations',
   '--baseline-dir',
 ] as const;
 
@@ -55,6 +56,11 @@ export interface ParsedBaselineArgs {
    * `known-good-partial` baseline. Never overrides a failed or blocked run.
    */
   allowUnverifiedAssertions: boolean;
+  /**
+   * Build 6.5: allows a run that used operator-declared expectations to become
+   * a `known-good-declared` baseline. Requires --confirm-known-good.
+   */
+  allowDeclaredExpectations: boolean;
   baselineDir: string;
   valid: boolean;
   error: string | null;
@@ -74,6 +80,7 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
     confirmedBy: null,
     confirmKnownGood: false,
     allowUnverifiedAssertions: false,
+    allowDeclaredExpectations: false,
     baselineDir: DEFAULT_BASELINE_DIR,
     valid: true,
     error: null,
@@ -122,6 +129,7 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
 
   parsed.confirmKnownGood = scan.flags.has('--confirm-known-good');
   parsed.allowUnverifiedAssertions = scan.flags.has('--allow-unverified-assertions');
+  parsed.allowDeclaredExpectations = scan.flags.has('--allow-declared-expectations');
 
   // The allowance is not a confirmation: allowing a partial run still requires
   // a human to say the state is known-good.
@@ -129,6 +137,16 @@ export function parseBaselineArgs(argv: readonly string[]): ParsedBaselineArgs {
     parsed.error =
       'Refusing to create a baseline: --allow-unverified-assertions requires --confirm-known-good. ' +
       'Allowing a partially verified run is not the same as approving it.';
+    parsed.valid = false;
+    return parsed;
+  }
+
+  // Build 6.5: declared expectations are a separate trust model and require
+  // the same explicit approval.
+  if (parsed.allowDeclaredExpectations && !parsed.confirmKnownGood) {
+    parsed.error =
+      'Refusing to create a baseline: --allow-declared-expectations requires --confirm-known-good. ' +
+      'Allowing operator-declared expectations is not the same as approving the baseline.';
     parsed.valid = false;
     return parsed;
   }
@@ -183,6 +201,11 @@ Options:
                            known-good-partial, covering executed steps
                            only. Requires --confirm-known-good, and never
                            overrides a failed or blocked run.
+  --allow-declared-expectations
+                           Build 6.5: permit a run that used operator-declared
+                           expectations (reports/expectations.json). The
+                           baseline is recorded as known-good-declared.
+                           Requires --confirm-known-good.
 
 Baselines are immutable. A duplicate id is refused rather than overwritten.
 
@@ -240,6 +263,7 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
     journey,
     acceptedSignalIds: args.acceptedSignalIds,
     allowUnverifiedAssertions: args.allowUnverifiedAssertions,
+    allowDeclaredExpectations: args.allowDeclaredExpectations,
     paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
   });
 
@@ -265,6 +289,7 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
       confirmedBy: args.confirmedBy === null ? null : safeVersion(args.confirmedBy, 'operator'),
       paths: { execution: args.executionPath, anomalies: args.anomaliesPath, journey: args.journeyPath },
       allowUnverifiedAssertions: args.allowUnverifiedAssertions,
+      allowDeclaredExpectations: args.allowDeclaredExpectations,
       baselineDir: args.baselineDir,
     });
 
@@ -285,6 +310,11 @@ export async function runBaselineCommand(argv: readonly string[]): Promise<numbe
       console.log('');
       console.log('  This baseline is NOT fully verified. It covers executed steps only,');
       console.log(`  and ${baseline.verification.unverifiedAssertions} expectation(s) remain unverified.`);
+    }
+    if (baseline.status === 'known-good-declared') {
+      console.log('');
+      console.log('  This baseline used operator-declared expectations. Coverage is "operator-declared",');
+      console.log('  not "full-plan"; trust came from operator declaration, not from Scout observation.');
     }
     console.log('');
     console.log(`  ${BASELINE_SUMMARY_NOTE}`);

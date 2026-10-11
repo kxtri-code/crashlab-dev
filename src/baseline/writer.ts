@@ -43,6 +43,13 @@ export interface BaselineCreationRequest {
    * Recorded on the baseline so the approval is auditable.
    */
   allowUnverifiedAssertions?: boolean;
+  /**
+   * Build 6.5: true when the source execution used operator-declared
+   * expectations (`reports/expectations.json`). The baseline becomes
+   * `known-good-declared` only when both flags were supplied on the baseline
+   * command and the source run actually carried an expectations file.
+   */
+  allowDeclaredExpectations?: boolean;
   /** Where baselines are stored. */
   baselineDir?: string;
   /** Injected in tests; defaults to now. */
@@ -81,12 +88,39 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
   // A partially verified run is only recorded as such when the operator said so.
   const partialApproved = !fullyVerified && request.allowUnverifiedAssertions === true;
 
+  // Build 6.5: a run that used operator-declared expectations is fully verified
+  // only with explicit operator approval. The coverage stamp stays
+  // `operator-declared` rather than collapsing into `full-plan`, so a later
+  // reader knows which trust model backed the comparison.
+  const usedDeclaredExpectations = request.execution.expectationFileHash !== null && request.execution.expectationFileHash !== undefined;
+  const declaredApproved = request.allowDeclaredExpectations === true && usedDeclaredExpectations;
+
+  let status: 'known-good' | 'known-good-partial' | 'known-good-declared';
+  if (declaredApproved) {
+    status = 'known-good-declared';
+  } else if (fullyVerified) {
+    status = 'known-good';
+  } else if (partialApproved) {
+    status = 'known-good-partial';
+  } else {
+    status = 'known-good';
+  }
+
+  let coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'operator-declared' | 'unavailable';
+  if (declaredApproved) {
+    coverage = 'operator-declared';
+  } else if (fullyVerified) {
+    coverage = 'full-plan';
+  } else {
+    coverage = executionVerification?.coverage ?? 'unavailable';
+  }
+
   return {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     baselineId: request.baselineId,
     name: request.name,
     // A partial baseline is never dressed up as a full one.
-    status: fullyVerified ? 'known-good' : partialApproved ? 'known-good-partial' : 'known-good',
+    status,
     createdAt: clock().toISOString(),
     confirmation: {
       explicit: true,
@@ -101,12 +135,10 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
     identity,
     knownSignals,
     verification: {
-      complete: fullyVerified,
-      coverage: fullyVerified
-        ? 'full-plan'
-        : (executionVerification?.coverage ?? 'unavailable'),
+      complete: fullyVerified || declaredApproved,
+      coverage,
       unverifiedAssertions,
-      operatorApproved: partialApproved,
+      operatorApproved: partialApproved || declaredApproved,
     },
     safety: {
       safeTestMode: request.execution.executor?.safeTestMode === true,
@@ -193,8 +225,8 @@ export function validateBaselineDocument(value: unknown, path: string): Baseline
   if (typeof record['baselineId'] !== 'string' || record['baselineId'].trim() === '') {
     return fail('baselineId is missing.');
   }
-  if (record['status'] !== 'known-good' && record['status'] !== 'known-good-partial') {
-    return fail('status must be "known-good" or "known-good-partial".');
+  if (record['status'] !== 'known-good' && record['status'] !== 'known-good-partial' && record['status'] !== 'known-good-declared') {
+    return fail('status must be "known-good", "known-good-partial", or "known-good-declared".');
   }
   if (record['confirmation'] === undefined) {
     return fail('the operator confirmation block is missing.');

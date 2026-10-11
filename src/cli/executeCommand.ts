@@ -30,6 +30,7 @@ import { TOOL_NAME, TOOL_VERSION } from '../version.js';
 import { sanitizeAppBuildId, sanitizeDataId, sanitizeEnvironmentId } from '../provenance/redaction.js';
 import { readFile } from 'node:fs/promises';
 import type { ProvenanceInput } from '../provenance/types.js';
+import { loadExpectationsFile } from '../executor/expectations.js';
 
 /** Default journey plan input path. */
 export const DEFAULT_JOURNEY_INPUT_PATH = 'reports/journey.json';
@@ -54,6 +55,8 @@ export const EXECUTE_FLAGS = [
   '--app-build-id',
   '--data-id',
   '--hash-test-data',
+  // Build 6.5: operator-declared expectations for SPA/JS flows.
+  '--expectations',
 ] as const;
 
 /** Parsed `execute` arguments. Pure, so it is unit-testable. */
@@ -76,6 +79,8 @@ export interface ParsedExecuteArgs {
   provenance: ProvenanceInput;
   /** Read the test-data file's bytes so its hash can be recorded. */
   hashTestData: boolean;
+  /** Build 6.5: optional operator-declared expectations for SPA/JS flows. */
+  expectationsPath: string | null;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -96,6 +101,7 @@ export function parseExecuteArgs(argv: readonly string[]): ParsedExecuteArgs {
     screenshots: true,
     provenance: {},
     hashTestData: false,
+    expectationsPath: null,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter((flag) => !(EXECUTE_FLAGS as readonly string[]).includes(flag)),
@@ -124,6 +130,8 @@ export function parseExecuteArgs(argv: readonly string[]): ParsedExecuteArgs {
   if (data !== null) parsed.dataPath = data;
   const output = requireValue(['--output', '--out', '-o']);
   if (output !== null) parsed.outputPath = output;
+  const expectations = requireValue(['--expectations']);
+  if (expectations !== null) parsed.expectationsPath = expectations;
 
   const timeout = flagValue(scan, ['--timeout']);
   if (timeout.present) {
@@ -205,6 +213,12 @@ Provenance (Build 5.1, all optional):
                                Opt-in: a hash marks identity, it does not
                                protect a secret.
 
+Operator-declared expectations (Build 6.5, optional):
+  --expectations <path>        Operator-declared expectations for SPA/JS
+                               flows. Bound to the journey by SHA-256.
+                               Only source="operator-declared" is accepted;
+                               no inference from Scout evidence.
+
 Safe test mode is always on and cannot be disabled: payment-adjacent actions
 are blocked before any browser interaction, and no live payment path exists.
 Screenshots stop once test data has entered the page, because a bitmap cannot
@@ -268,6 +282,21 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
   // There is no flag that disables the payment guard, so there is nothing to
   // validate here beyond keeping the authorization check above it.
 
+  // --- gate 5: operator-declared expectations, before any browser opens ----
+  // The expectations file is bound to the journey by hash, so it must be
+  // validated against the plan that just loaded. Validation rejects unsafe
+  // paths, payment-adjacent destinations, cross-origin claims, and any
+  // expectation that references a step the plan does not contain.
+  let expectations;
+  if (args.expectationsPath !== null) {
+    try {
+      expectations = await loadExpectationsFile(args.expectationsPath, plan);
+    } catch (error) {
+      console.error(`Refusing to execute: ${(error as Error).message}`);
+      return 1;
+    }
+  }
+
   const outputAbsolute = resolve(process.cwd(), args.outputPath);
   // Screenshots live beside the report, in an `evidence/` directory at the repo
   // root, so a run's evidence is easy to find and easy to gitignore.
@@ -278,6 +307,7 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
   console.log(`Goal:    ${plan.goal}`);
   console.log(`Target:  ${plan.target.url}`);
   if (args.dataPath) console.log(`Test data: ${args.dataPath} (${Object.keys(testData ?? {}).length} key(s), values never logged)`);
+  if (args.expectationsPath) console.log(`Expectations: ${args.expectationsPath} (operator-declared, bound to journey hash)`);
   console.log('Safe test mode: ON (payment actions are blocked; this cannot be disabled)');
   if (args.provenance.environmentId) console.log(`Environment ID: ${args.provenance.environmentId}`);
   if (args.provenance.appBuildId) console.log(`Application build: ${args.provenance.appBuildId}`);
@@ -301,6 +331,7 @@ export async function runExecuteCommand(argv: readonly string[]): Promise<number
       evidenceDir,
       provenance: args.provenance,
       testDataFixtureHashSource,
+      expectations,
     });
   } catch (error) {
     console.error('');

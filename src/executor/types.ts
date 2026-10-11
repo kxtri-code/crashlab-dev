@@ -13,6 +13,7 @@
 
 import type { JourneyAction, JourneyPlan, JourneyType } from '../journey/types.js';
 import type { EnvironmentProvenance, ProvenanceInput } from '../provenance/types.js';
+import type { ExpectationsFile, ExpectationOutcome } from './expectations.js';
 
 /** Execution report schema version. */
 export const EXECUTION_SCHEMA_VERSION = '1.0';
@@ -68,9 +69,12 @@ export type VerificationStatus = 'complete' | 'partial' | 'incomplete' | 'unavai
  * - `executed-steps-only` - only steps with a deterministic target were
  *                           evaluated; the rest are unverified
  * - `partial-plan`        - some required steps did not run at all
+ * - `operator-declared`   - all expectations passed, including operator-declared
+ *                           ones; never `full-plan` because the verification
+ *                           came from operator declaration, not Scout evidence
  * - `unavailable`         - no verification metadata
  */
-export type VerificationCoverage = 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+export type VerificationCoverage = 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'operator-declared' | 'unavailable';
 
 /**
  * Top-level verification record.
@@ -242,6 +246,11 @@ export interface StepExecutionResult {
    * the step declared none, or when they were never evaluated.
    */
   postconditions: import('./postconditionRunner.js').PostconditionOutcome[] | null;
+  /**
+   * Build 6.5: the outcome of each operator-declared expectation bound to this
+   * step. Null when none were declared or evaluated.
+   */
+  expectationResults?: ExpectationOutcome[] | null;
   /** Step description, echoed from the immutable plan. */
   description: string;
   /** Step confidence, echoed from the immutable plan. Not a pass/fail signal. */
@@ -335,6 +344,12 @@ export interface ExecutionReport {
    * identifier that passed sanitization. Null only for a caller that opted out.
    */
   environment: EnvironmentProvenance | null;
+  /**
+   * Build 6.5: SHA-256 of the operator-declared expectations file, for
+   * provenance and reproduction consistency. Null when no expectations file
+   * was used.
+   */
+  expectationFileHash?: string | null;
 }
 
 /** Options controlling one execution run. */
@@ -372,6 +387,11 @@ export interface ExecutionOptions {
    * the caller must opt in.
    */
   testDataFixtureHashSource?: Uint8Array;
+  /**
+   * Build 6.5: operator-declared expectations for SPA/JS-driven flows.
+   * Validated against the journey plan before any browser launches.
+   */
+  expectations?: ExpectationsFile;
 }
 
 /** A validation failure that must stop the run before any browser launches. */

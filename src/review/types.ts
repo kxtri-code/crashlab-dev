@@ -110,7 +110,7 @@ export interface CandidateSummary {
  */
 export interface BaselineVerificationSummary {
   status: 'complete' | 'partial' | 'unavailable';
-  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'unavailable';
+  coverage: 'full-plan' | 'executed-steps-only' | 'partial-plan' | 'operator-declared' | 'unavailable';
   unverifiedAssertions: number;
 }
 

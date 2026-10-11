@@ -25,6 +25,7 @@ import { buildExecutionReport } from './executionReport.js';
 import { buildEnvironmentProvenance, collectRuntimeProvenance, hashTestDataFixture } from '../provenance/reportMetadata.js';
 import { collectSecrets, createScrubber, redactMessage } from './redaction.js';
 import { isSensitiveTestDataKey } from './redaction.js';
+import { evaluateExpectations, worstExpectationOutcome } from './expectations.js';
 import type {
   ExecutionOptions,
   ExecutionReport,
@@ -185,6 +186,15 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       const outcome = await dispatchAction(step, executionContext);
       const urlAfter = executionContext.currentUrl();
 
+      // Build 6.5: operator-declared expectations bound to this step, evaluated
+      // against the live page URL. Only runs when an expectations file was
+      // supplied; otherwise no Playwright call is made.
+      const expectationResults =
+        options.expectations !== undefined
+          ? await evaluateExpectations(page, options.expectations, step.id)
+          : null;
+      const worstExpectation = worstExpectationOutcome(expectationResults ?? []);
+
       // A skipped step is an observation, not a failure, so it gets no error
       // object and no failure screenshot naming.
       const evidenceSuffix = outcome.status === 'passed' || outcome.status === 'skipped' ? 'after' : 'failure';
@@ -247,6 +257,8 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
         assertion: outcome.assertion ?? null,
         // Build 6.3: this action's declared-destination checks.
         postconditions: outcome.postconditions ?? null,
+        // Build 6.5: operator-declared expectation outcomes for this step.
+        expectationResults,
         description: step.description,
         planConfidence: step.confidence,
       });

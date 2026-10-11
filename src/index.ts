@@ -139,6 +139,29 @@ export { buildVerification, deriveExecutionStatus, isFullyVerified } from './exe
 export { buildExecutionReport, summarizeExecution, countSteps, deriveStatus } from './executor/executionReport.js';
 export { ExecutionContext } from './executor/executionContext.js';
 export type { ActionOutcome } from './executor/types.js';
+// Build 6.5: operator-declared expectations for SPA/JS flows.
+export {
+  EXPECTATIONS_SCHEMA_VERSION,
+  OPERATOR_DECLARED_SOURCE,
+  REJECTED_SOURCES,
+  EXPECTATION_BEARING_ACTIONS,
+  URL_PATH_MATCH_MODES,
+  URL_ORIGIN_MATCH_MODES,
+  validateExpectationsFile,
+  parseExpectationsFile,
+  loadExpectationsFile,
+  canonicalizeExpectations,
+  hashExpectationsFile,
+  evaluateExpectations,
+  worstExpectationOutcome,
+} from './executor/expectations.js';
+export type {
+  OperatorExpectation,
+  ExpectationsFile,
+  ExpectationResult,
+  ExpectationOutcome,
+  ExpectationValidationResult,
+} from './executor/expectations.js';
 export {
   EXECUTION_SCHEMA_VERSION,
   SUPPORTED_JOURNEY_SCHEMA_VERSIONS,
