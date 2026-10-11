@@ -371,3 +371,61 @@ A stable, hardened, fully verified snapshot of the complete 11-stage CrashLab ar
    - Defect candidates remain triage leads for human review. Human transitions are performed append-only via the `review-state` CLI.
 6. **Ephemeral Fixture Isolation:**
    - All tests bind strictly to `127.0.0.1` and clean up servers, browsers, pages, and temporary directories in teardown.
+
+---
+
+## Build 10.2 Checkpoint: Staging Pilot Configuration Validator
+
+A deterministic, local-only preflight safety gate that verifies protected pilot configurations before any future browser execution is permitted.
+
+- **Checkpoint tag:** `build10.2-validator`
+- **Scope:** Pure preflight configuration validation for staging/QA pilots. Enforces URL safety, origin boundaries, journey safety, forbidden action coverage, test data isolation, and non-secret authorization references.
+- **Safety Status:** Staging pilot remains **BLOCKED**. Zero browser execution was performed in this build.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| --- | --- |
+| Full test suite | **1,268 passed** (47 files) |
+| Unit test suite (`npm run test:unit`) | **1,101 passed** (37 files) |
+| Browser test suite (`npm run test:browser`) | **167 passed** (10 files) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Playwright imports in validator | **0** (strictly prohibited) |
+| Network / HTTP calls in validator | **0** (`fetch`, `node:http`, `node:https` absent) |
+| External database or AI dependencies | **0** |
+| Report determinism | Byte-identical JSON outputs across repeated runs |
+| Secret safety | Credentials never accepted in config, printed, or reported |
+
+### Configuration Contract & Rules
+
+| Field | Rule | Local Synthetic | Staging / QA / Demo |
+| --- | --- | --- | --- |
+| `TARGET_URL` | Absolute URL syntax, no credentials, no fragments | `http://127.0.0.1` or `localhost` | `https://` strictly required; production hostnames rejected |
+| `TARGET_ENVIRONMENT` | Must be one of `local`, `demo`, `qa`, `staging` | `local` | `staging`, `qa`, or `demo` |
+| `ALLOWED_ORIGINS` | Pure origins (`protocol://host[:port]`), non-wildcard | Includes target origin | Includes target origin |
+| `ALLOWED_JOURNEYS` | Unique IDs, non-empty goals, safe actions only | 1 to 4 journeys | 2 to 4 journeys |
+| `FORBIDDEN_ACTIONS` | Prohibits dangerous/destructive mutations | Optional for local | Required: must cover payment, deletion, credentials |
+| `TEST_DATA_FILE` | Traversal-free path; regular file check | Optional | Checked for existence only; contents never read/printed |
+| `AUTHORIZATION_REFERENCE`| Non-secret ticket/document reference | Not required | Strictly required; tokens/keys rejected |
+
+### CLI Usage & Exit Codes
+
+```bash
+npm run pilot-preflight -- --config <path>
+npm run pilot-preflight -- --config <path> --report <path>
+npm run pilot-preflight -- --config <path> --json
+npm run pilot-preflight -- --help
+```
+
+- **Exit Code 0:** Configuration is valid and safe (`status: ready`).
+- **Exit Code 1:** Configuration parsed but blocked or invalid by safety rules (`status: blocked` or `invalid`).
+- **Exit Code 2:** CLI syntax error, missing argument, or unreadable file.
+
+### Safety Invariants
+
+1. **Pure Execution Gate:** `validatePilotConfiguration(config)` provides an immutable gate. A future pilot runner must call this before browser creation and refuse launch unless `status === 'ready'`.
+2. **Production Rejection:** Production hostnames are rejected unconditionally.
+3. **No Secret Handling:** Passwords, tokens, cookies, and secret values must never be placed in configuration files or committed to Git.
+4. **Zero Browser / Network Activity:** The validator contains zero Playwright or network imports.
+5. **Staging Remains Blocked:** Testing an external staging application requires explicit written authorization and protected local configuration supplied by the operator.

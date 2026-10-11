@@ -570,3 +570,36 @@ export {
   runReviewUiCommand,
 } from './cli/reviewUiCommand.js';
 export type { ParsedReviewUiArgs } from './cli/reviewUiCommand.js';
+
+// Build 10.2: Staging Pilot Preflight Validator
+export type {
+  PilotEnvironment,
+  ApprovedJourney,
+  PilotConfiguration,
+  SafetyGateStatus,
+  SafetyCheck,
+  ValidationError,
+  PreflightResult,
+  PreflightReport,
+} from './preflight/types.js';
+export { VALID_PILOT_ENVIRONMENTS } from './preflight/types.js';
+export {
+  loadPilotConfiguration,
+  ConfigurationLoadError,
+} from './preflight/loader.js';
+export {
+  validatePilotConfiguration,
+  buildPreflightReport,
+} from './preflight/validator.js';
+export type { PreflightValidationOptions } from './preflight/validator.js';
+export {
+  formatPreflightSummary,
+  writePreflightReport,
+} from './preflight/report.js';
+export {
+  PREFLIGHT_USAGE,
+  PREFLIGHT_FLAGS,
+  parsePreflightArgs,
+  runPreflightCommand,
+} from './cli/preflightCommand.js';
+export type { ParsedPreflightArgs } from './cli/preflightCommand.js';
