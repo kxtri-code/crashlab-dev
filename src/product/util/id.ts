@@ -17,7 +17,8 @@ export type IdPrefix =
   | 'run'
   | 'art'
   | 'candref'
-  | 'aud';
+  | 'aud'
+  | 'req';
 
 export interface IdGenerator {
   generateId(prefix: IdPrefix): string;

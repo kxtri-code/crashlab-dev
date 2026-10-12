@@ -105,6 +105,17 @@ export class ProductService {
     return this.repos.audits.create(event);
   }
 
+  async recordSecurityEvent(
+    workspaceId: string,
+    actorUserId: string,
+    eventType: AuditEvent['eventType'],
+    entityType: string,
+    entityId: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<AuditEvent> {
+    return this.recordAudit(workspaceId, actorUserId, eventType, entityType, entityId, metadata);
+  }
+
   // --- Users -----------------------------------------------------------------
 
   async createUser(input: CreateUserInput): Promise<User> {

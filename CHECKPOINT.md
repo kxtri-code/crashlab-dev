@@ -569,3 +569,29 @@ A fully verified, relational persistence adapter satisfying the provider-neutral
 - **Root Cause:** When running multi-statement schema migrations (e.g. `001_initial_product_schema.sql`), `node-postgres` returns an array of `QueryResult` objects (`QueryResult[]`). Direct evaluation of `res.rowCount ?? res.rows.length` failed with `TypeError: Cannot read properties of undefined (reading 'length')` because Array instances do not have `.rowCount` or `.rows` properties.
 - **Resolution:** Introduced `normalizePgResult<R>(rawResult: unknown): PostgresQueryResult<R>` across `RealPgPool.query` and `RealPgPool.connect().query`. When `rawResult` is an array (multi-statement execution), rows and row counts are aggregated safely; for single statements or DDL (where `rowCount` is null), rows are normalized to `[]` and rowCount to `0`.
 - **Migration Safeguards:** Enhanced `runMigrations` to compute SHA-256 with CRLF-normalization, record applied migrations transactionally, verify checksum equality on subsequent runs, refuse tampered migrations, and roll back cleanly on failure.
+
+---
+
+## Build 12B.1 Checkpoint: Real Authentication & Database-Backed Product API
+
+A verified snapshot replacing request-header-only identity with a real authentication boundary and providing database-backed API wiring via dependency injection.
+
+- **Checkpoint tag:** `build12b1-auth-storage`
+- **Scope:** Provider-neutral authentication middleware (`authenticateRequest`), HMAC-SHA256 local development bearer tokens (`createDevToken`, `verifyDevToken`), strict production mode enforcement (client-supplied `X-User-Id` rejected), storage dependency injection resolver (`resolveProductRepositories`), database-backed `ProductApiServer` with pool lifecycle management, request ID propagation (`X-Request-Id`), access denial security audit logging (`workspace.access_denied`), CLI commands (`npm run auth:token`, `npm run auth:check`), and comprehensive unit/integration test suite.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,262 passed** (43 files) |
+| Browser test suite (`npm run test:browser`) | **176 passed** (12 files) |
+| Build 12B.1 unit tests (`build12b1AuthAndStorage.test.ts`) | **27 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Real database connection & migration | Idempotently verified against Supabase |
+| Production mode auth security | Client-supplied `X-User-Id` rejected with 401 |
+| Missing/expired/malformed bearer tokens | Rejected with 401 |
+| Storage provider selection | Explicit (`in-memory` vs `postgres`); missing `DATABASE_URL` fails clearly |
+| Request correlation | `X-Request-Id` generated and propagated on all responses |
+| External network / AI / Billing / Browser | **0** |

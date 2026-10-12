@@ -2661,3 +2661,34 @@ npm run db:migrate
 | **`0`** | Successful connection check or migrations successfully applied. |
 | **`1`** | Database connection failure, migration failure, or missing `DATABASE_URL`. |
 | **`2`** | Invalid CLI syntax or unsupported option. |
+
+---
+
+## Build 12B.1: Real Authentication & Database-Backed Product API
+
+Build 12B.1 establishes a hardened, real local authentication boundary and enables database-backed API execution through explicit dependency injection.
+
+- **HMAC-SHA256 Bearer Tokens:** Protected endpoints require standard `Authorization: Bearer <token>` signed with `PRODUCT_AUTH_SECRET`.
+- **Production Mode Header Rejection:** In production mode (`PRODUCT_AUTH_MODE=production`), arbitrary client-supplied `X-User-Id` headers are strictly rejected with HTTP 401.
+- **Development Fallback:** In explicit development mode (`PRODUCT_AUTH_MODE=development`), local tests can provide `X-User-Id` or configured default user identities.
+- **Explicit Storage Selection:** Repositories are configured via `PRODUCT_STORAGE` (`in-memory` or `postgres`). If `postgres` is selected without `DATABASE_URL`, initialization fails immediately with zero silent fallback.
+- **Request Tracing:** Every request receives a unique `requestId` returned in response headers (`X-Request-Id`) and response payloads.
+- **Security Audit Logging:** Unauthorized cross-workspace access attempts record immutable `workspace.access_denied` audit events in the target workspace.
+
+### Authentication CLI Commands
+
+```bash
+# Generate a signed development bearer token for local API calls
+npm run auth:token -- --user usr_alice
+
+# Verify current authentication mode and storage configuration safely
+npm run auth:check
+```
+
+### Exit Codes
+
+| Exit Code | Meaning |
+| :--- | :--- |
+| **`0`** | Token generated or configuration verified successfully. |
+| **`1`** | Token generation or configuration failure. |
+| **`2`** | Invalid CLI syntax or missing required argument. |

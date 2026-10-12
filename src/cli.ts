@@ -34,6 +34,8 @@ import { PILOT_USAGE, runPilotCommand } from './cli/pilotCommand.js';
 import { DEMO_USAGE, runDemoCommand } from './cli/demoCommand.js';
 import { DB_CHECK_USAGE, runDbCheckCommand } from './cli/dbCheckCommand.js';
 import { DB_MIGRATE_USAGE, runDbMigrateCommand } from './cli/dbMigrateCommand.js';
+import { runAuthTokenCommand } from './cli/authTokenCommand.js';
+import { runAuthCheckCommand } from './cli/authCheckCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -74,6 +76,8 @@ Usage:
   npm run demo [options]
   npm run db:check
   npm run db:migrate
+  npm run auth:token -- --user <userId>
+  npm run auth:check
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -91,6 +95,8 @@ Commands:
   demo           Run automated local product demonstration (Build 10.5)
   db:check       Check PostgreSQL/Supabase database connectivity (Build 12A)
   db:migrate     Run schema migrations against PostgreSQL/Supabase (Build 12A)
+  auth:token     Generate a signed development bearer token (Build 12B.1)
+  auth:check     Verify authentication mode and storage configuration (Build 12B.1)
   help           Show this message
   version        Print the build version
 
@@ -442,6 +448,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
 
   if (first === 'db:migrate') {
     return runDbMigrateCommand(rest);
+  }
+
+  if (first === 'auth:token') {
+    return runAuthTokenCommand(rest);
+  }
+
+  if (first === 'auth:check') {
+    return runAuthCheckCommand(rest);
   }
 
   return main([...argv]);

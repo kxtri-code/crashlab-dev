@@ -9,6 +9,7 @@ export type AuditEventType =
   | 'workspace.created'
   | 'workspace.member_added'
   | 'workspace.member_removed'
+  | 'workspace.access_denied'
   | 'project.created'
   | 'target.configured'
   | 'journey.approved'
@@ -18,7 +19,9 @@ export type AuditEventType =
   | 'run.started'
   | 'run.completed'
   | 'run.transitioned'
-  | 'candidate.reviewed';
+  | 'candidate.reviewed'
+  | 'auth.success'
+  | 'auth.failed';
 
 export interface AuditEvent {
   readonly id: string;

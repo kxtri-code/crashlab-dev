@@ -16,7 +16,7 @@ CrashLab maintains a strict separation between two distinct HTTP services:
 | **Port** | `3210` | `3220` (or ephemeral) |
 | **Mutability** | Strictly Read-Only | Read and Managed Writes |
 | **Scope** | Single run candidate triage & inspection | Multi-tenant workspaces, projects, runs, and artifacts |
-| **Authentication** | Local operator token | Tenant-scoped User Identity (`X-User-Id`) |
+| **Authentication** | Local operator token | HMAC-SHA256 Bearer Token (`Authorization: Bearer <token>`) |
 
 ---
 
@@ -24,16 +24,21 @@ CrashLab maintains a strict separation between two distinct HTTP services:
 
 ### Request Headers
 - `Content-Type: application/json`
-- `X-User-Id: <user_id>`: Identifies the requesting user (in Build 11, fake local identity).
+- `Authorization: Bearer <token>`: Required in production mode (`PRODUCT_AUTH_MODE=production`).
+- `X-User-Id: <user_id>`: Permitted only in explicit development mode (`PRODUCT_AUTH_MODE=development`). Untrusted and rejected in production.
+
+### Response Headers
+- `X-Request-Id: <req_...>`: Unique request correlation ID generated for every request.
 
 ### Response Format
-All responses return standardized JSON:
+All responses return standardized JSON with request correlation:
 
 #### Success (200 OK, 201 Created)
 ```json
 {
   "success": true,
-  "data": { ... }
+  "data": { ... },
+  "requestId": "req_0123456789abcdef"
 }
 ```
 
@@ -45,7 +50,8 @@ All responses return standardized JSON:
     "code": "FORBIDDEN",
     "message": "Access denied: Actor is not a member of workspace ws_123.",
     "details": null
-  }
+  },
+  "requestId": "req_0123456789abcdef"
 }
 ```
 

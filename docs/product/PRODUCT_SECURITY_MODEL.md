@@ -29,20 +29,31 @@ CrashLab enforces strict tenant boundaries at every layer of the architecture:
 Incoming HTTP Request
         │
         ▼
-Resolve Actor Identity (User ID)
+Authentication Middleware (Authorization: Bearer <token>)
+  ├── Production: Valid HMAC-SHA256 Token Required (X-User-Id strictly rejected)
+  └── Development: Token or X-User-Id accepted
+        │
+        ▼
+IdentityContext { userId, authMethod, requestId }
         │
         ▼
 Query Workspace Membership (WorkspaceMember)
-  ├── Not Found -> HTTP 403 Forbidden
+  ├── Not Found -> HTTP 403 Forbidden (Logs workspace.access_denied audit event)
   └── Found -> Verify Role Permissions
         │
         ▼
 Repository Data Query
-  └── Must specify `workspaceId` parameter
+  └── Must specify `workspaceId` parameter ($1 in parameterized SQL)
         │
         ▼
-Return Tenant-Scoped Entity
+Return Tenant-Scoped Entity (with X-Request-Id)
 ```
+
+### 2.1 Authentication Boundary (Build 12B.1)
+- **Token Verification:** All requests to `/api/v1/*` in production mode require a valid, unexpired HMAC-SHA256 bearer token signed with `PRODUCT_AUTH_SECRET`.
+- **Zero Client Spoofing:** Client-supplied `X-User-Id` headers are untrusted and rejected with HTTP 401 when `PRODUCT_AUTH_MODE=production`.
+- **Timing-Safe Comparison:** Signatures are evaluated using timing-safe comparisons to eliminate side-channel timing leaks.
+- **Request Tracing:** Every request receives a unique `requestId` (`req_...`) propagated in response headers (`X-Request-Id`).
 
 ### 2.1 Repository-Level Isolation
 - Every query method that reads customer-owned entities (`projects`, `targets`, `journeys`, `runs`, `artifacts`, `candidates`, `audits`) requires an explicit `workspaceId` parameter.

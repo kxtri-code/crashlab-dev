@@ -696,9 +696,9 @@ describe('Build 12A: PostgreSQL Persistence Adapter Suite', () => {
           'SELECT name, checksum FROM _migrations ORDER BY id ASC;',
         );
         expect(checkRes.rows).toHaveLength(1);
-        expect(checkRes.rows[0].name).toBe('001_initial_product_schema.sql');
-        expect(checkRes.rows[0].checksum).toBeDefined();
-        expect(checkRes.rows[0].checksum.length).toBe(64);
+        expect(checkRes.rows[0]!.name).toBe('001_initial_product_schema.sql');
+        expect(checkRes.rows[0]!.checksum).toBeDefined();
+        expect(checkRes.rows[0]!.checksum.length).toBe(64);
       });
 
       it('second migration run is a complete no-op (idempotent)', async () => {

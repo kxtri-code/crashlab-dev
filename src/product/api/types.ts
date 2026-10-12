@@ -13,6 +13,7 @@ import type { RunArtifact } from '../types/artifact.js';
 export interface ApiSuccessResponse<T> {
   readonly success: true;
   readonly data: T;
+  readonly requestId?: string;
 }
 
 export interface ApiErrorResponse {
@@ -22,6 +23,7 @@ export interface ApiErrorResponse {
     readonly message: string;
     readonly details?: unknown;
   };
+  readonly requestId?: string;
 }
 
 export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
@@ -31,6 +33,7 @@ export interface HealthResponse {
   readonly version: string;
   readonly appEnvironment: string;
   readonly mode: 'hosted-mvp-foundation';
+  readonly requestId?: string;
 }
 
 export interface CreateWorkspaceRequest {
