@@ -15,6 +15,42 @@ export interface PostgresQueryResult<R = any> {
   readonly rowCount: number;
 }
 
+/**
+ * Normalizes raw query results from `pg` into a consistent PostgresQueryResult<R>.
+ * In node-postgres:
+ * - A single statement returns a QueryResult object ({ rows: R[], rowCount: number | null }).
+ * - DDL statements (CREATE, DROP, ALTER) return rowCount: null.
+ * - Multi-statement queries (e.g. multi-command migrations) return an Array of QueryResults.
+ *   Evaluating `res.rowCount ?? res.rows.length` directly on an Array causes
+ *   `Cannot read properties of undefined (reading 'length')` because an Array has neither .rowCount nor .rows.
+ */
+export function normalizePgResult<R = any>(rawResult: unknown): PostgresQueryResult<R> {
+  if (Array.isArray(rawResult)) {
+    const rows: R[] = [];
+    let rowCount = 0;
+    for (const res of rawResult) {
+      if (res && Array.isArray(res.rows)) {
+        rows.push(...res.rows);
+      }
+      if (res && typeof res.rowCount === 'number') {
+        rowCount += res.rowCount;
+      } else if (res && Array.isArray(res.rows)) {
+        rowCount += res.rows.length;
+      }
+    }
+    return { rows, rowCount };
+  }
+
+  if (rawResult && typeof rawResult === 'object') {
+    const res = rawResult as { rows?: R[]; rowCount?: number | null };
+    const rows = Array.isArray(res.rows) ? res.rows : [];
+    const rowCount = typeof res.rowCount === 'number' ? res.rowCount : rows.length;
+    return { rows, rowCount };
+  }
+
+  return { rows: [], rowCount: 0 };
+}
+
 export interface PostgresClient {
   query<R extends pg.QueryResultRow = any>(text: string, params?: readonly unknown[]): Promise<PostgresQueryResult<R>>;
   release(): void;
@@ -125,10 +161,7 @@ export class RealPgPool implements PostgresPool {
   async query<R extends pg.QueryResultRow = any>(text: string, params?: readonly unknown[]): Promise<PostgresQueryResult<R>> {
     try {
       const result = await this.inner.query<R>(text, params ? [...params] : undefined);
-      return {
-        rows: result.rows,
-        rowCount: result.rowCount ?? result.rows.length,
-      };
+      return normalizePgResult<R>(result);
     } catch (err: unknown) {
       throw this.sanitizeError(err);
     }
@@ -141,10 +174,7 @@ export class RealPgPool implements PostgresPool {
         query: async <R extends pg.QueryResultRow = any>(text: string, params?: readonly unknown[]): Promise<PostgresQueryResult<R>> => {
           try {
             const res = await client.query<R>(text, params ? [...params] : undefined);
-            return {
-              rows: res.rows,
-              rowCount: res.rowCount ?? res.rows.length,
-            };
+            return normalizePgResult<R>(res);
           } catch (err: unknown) {
             throw this.sanitizeError(err);
           }

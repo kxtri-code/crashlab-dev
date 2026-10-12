@@ -107,22 +107,33 @@ export class MockPostgresPool implements PostgresPool {
       return { rows: [] as R[], rowCount: 0 };
     }
 
+    // Strip leading comments
+    const stripped = trimmed.replace(/^(?:\s*--[^\r\n]*(?:\r?\n|$))+/g, '').trim();
+
+    // Syntax failure simulation for testing transactional rollback
+    if (/^FAIL|^INVALID/i.test(stripped)) {
+      throw new Error(`Syntax error in SQL: "${stripped.slice(0, 40)}"`);
+    }
+
     // 2. DDL / Setup handling
-    if (/^CREATE TABLE/i.test(trimmed) || /^CREATE INDEX/i.test(trimmed)) {
+    if (/^CREATE TABLE/i.test(stripped) || /^CREATE INDEX/i.test(stripped) || stripped.length === 0) {
       return { rows: [] as R[], rowCount: 0 };
     }
 
     // 3. Simple health check
-    if (/^SELECT\s+1/i.test(trimmed)) {
+    if (/^SELECT\s+1/i.test(stripped)) {
       return { rows: [{ result: 1 }] as unknown as R[], rowCount: 1 };
     }
 
     // 4. Migration table queries
-    if (/SELECT\s+name\s+FROM\s+_migrations/i.test(trimmed)) {
+    if (/SELECT\s+(?:name|name,\s*checksum|\*)\s+FROM\s+_migrations/i.test(stripped)) {
       const rows = this.tables.get('_migrations') ?? [];
-      return { rows: rows.map((r) => ({ name: r.name })) as unknown as R[], rowCount: rows.length };
+      return {
+        rows: rows.map((r) => ({ name: r.name, checksum: r.checksum })) as unknown as R[],
+        rowCount: rows.length,
+      };
     }
-    if (/INSERT\s+INTO\s+_migrations/i.test(trimmed)) {
+    if (/INSERT\s+INTO\s+_migrations/i.test(stripped)) {
       const name = params[0] as string;
       const checksum = params[1] as string;
       const migs = this.tables.get('_migrations') ?? [];

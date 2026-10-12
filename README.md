@@ -2630,3 +2630,34 @@ npm run pilot-preflight -- --config path/to/local-config.json
 4. **No External Network Access:** Zero outbound requests were made outside loopback.
 5. **No AI / Cloud / Database Dependencies:** The pipeline runs entirely self-contained without external services.
 6. **Staging Remains Blocked:** Real staging environments remain blocked until authorized testing procedures and credentials are confirmed by operators.
+
+---
+
+## Build 12A: PostgreSQL / Supabase Persistence Adapter
+
+Build 12A adds a production-ready PostgreSQL persistence adapter satisfying the provider-neutral repository interfaces introduced in Build 11.
+
+- **Architecture:** `ProductService` -> `ProductRepositories` interface -> `InMemoryProductRepository` (for local tests) / `PostgresProductRepository` (for production/Supabase).
+- **Zero Credentials Committed:** All credentials are strictly parsed from environment variables (`DATABASE_URL`). Passwords and tokens are permanently masked in logs and safe target displays.
+- **Strict Tenant Isolation:** Every query involving workspace-owned data requires and enforces `workspace_id = $1` at the SQL query level.
+- **Append-Only Auditing:** Audit events are immutable; normal updates or deletions are rejected.
+- **Parameterized SQL:** 100% of SQL statements are parameterized (`$1, $2, ...`), preventing SQL injection.
+- **Zero Secrets Persisted:** Strict secret validation rejects passwords, tokens, API keys, cookies, or raw test data prior to any database write.
+
+### Database CLI Commands
+
+```bash
+# Check database connectivity without leaking credentials
+npm run db:check
+
+# Run pending SQL migrations safely and transactionally
+npm run db:migrate
+```
+
+### Exit Codes
+
+| Exit Code | Meaning |
+| :--- | :--- |
+| **`0`** | Successful connection check or migrations successfully applied. |
+| **`1`** | Database connection failure, migration failure, or missing `DATABASE_URL`. |
+| **`2`** | Invalid CLI syntax or unsupported option. |

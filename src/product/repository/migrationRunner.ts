@@ -207,8 +207,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_workspace_timestamp ON audit_events(workspa
 CREATE INDEX IF NOT EXISTS idx_audit_workspace_event_type ON audit_events(workspace_id, event_type);
 `;
 
-function sha256(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex');
+function normalizeSqlForHashing(content: string): string {
+  return content.replace(/\r\n/g, '\n').trim();
+}
+
+export function sha256(content: string): string {
+  return createHash('sha256').update(normalizeSqlForHashing(content), 'utf8').digest('hex');
 }
 
 /**
@@ -250,12 +254,22 @@ export async function runMigrations(
     `);
 
     // 2. Fetch existing migrations
-    const existingRes = await client.query<{ name: string }>('SELECT name FROM _migrations ORDER BY id ASC;');
-    const existingNames = new Set(existingRes.rows.map((r) => r.name));
+    const existingRes = await client.query<{ name: string; checksum?: string }>(
+      'SELECT name, checksum FROM _migrations ORDER BY id ASC;',
+    );
+    const existingMap = new Map(existingRes.rows.map((r) => [r.name, r.checksum]));
 
     // 3. Apply missing migrations in order
     for (const mig of list) {
-      if (existingNames.has(mig.name)) {
+      const currentChecksum = sha256(mig.sql);
+
+      if (existingMap.has(mig.name)) {
+        const recordedChecksum = existingMap.get(mig.name);
+        if (recordedChecksum && recordedChecksum !== currentChecksum) {
+          throw new Error(
+            `Migration checksum mismatch for "${mig.name}". Expected ${recordedChecksum}, but computed ${currentChecksum}. Modifying already-applied migrations is not permitted.`,
+          );
+        }
         alreadyApplied.push(mig.name);
         continue;
       }
@@ -263,10 +277,9 @@ export async function runMigrations(
       await client.query('BEGIN;');
       try {
         await client.query(mig.sql);
-        const checksum = sha256(mig.sql);
         await client.query(
           'INSERT INTO _migrations (name, checksum) VALUES ($1, $2);',
-          [mig.name, checksum],
+          [mig.name, currentChecksum],
         );
         await client.query('COMMIT;');
         applied.push(mig.name);

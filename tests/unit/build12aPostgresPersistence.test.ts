@@ -22,6 +22,7 @@ import {
   createPostgresProductRepositories,
   MockPostgresPool,
   runMigrations,
+  normalizePgResult,
   sanitizeConnectionString,
   loadPostgresConfigFromEnv,
   ProductService,
@@ -600,6 +601,151 @@ describe('Build 12A: PostgreSQL Persistence Adapter Suite', () => {
       } finally {
         await server.stop();
       }
+    });
+  });
+
+  // ===========================================================================
+  // 8. Real-PG Result Compatibility & Migration Regressions
+  // ===========================================================================
+  describe('8. Real-PG Result Compatibility & Migration Regressions', () => {
+    describe('normalizePgResult adapter contract', () => {
+      it('handles real single-statement SELECT result with numeric rowCount', () => {
+        const rawPgResult = {
+          command: 'SELECT',
+          rowCount: 2,
+          rows: [{ id: 'usr_1' }, { id: 'usr_2' }],
+        };
+        const normalized = normalizePgResult(rawPgResult);
+        expect(normalized.rowCount).toBe(2);
+        expect(normalized.rows).toHaveLength(2);
+        expect(normalized.rows[0].id).toBe('usr_1');
+      });
+
+      it('handles real DDL statement result with null rowCount and empty rows', () => {
+        const rawPgResult = {
+          command: 'CREATE',
+          rowCount: null,
+          rows: [],
+        };
+        const normalized = normalizePgResult(rawPgResult);
+        expect(normalized.rowCount).toBe(0);
+        expect(normalized.rows).toEqual([]);
+      });
+
+      it('handles empty result sets safely', () => {
+        const normalized = normalizePgResult({ command: 'SELECT', rowCount: 0, rows: [] });
+        expect(normalized.rowCount).toBe(0);
+        expect(normalized.rows).toEqual([]);
+      });
+
+      it('handles multi-statement result array from real pg execution (reproducing exact previous undefined.length crash path)', () => {
+        // When executing multi-statement migrations, pg returns an array of QueryResult objects.
+        // In the previous unnormalized implementation:
+        //   { rows: res.rows, rowCount: res.rowCount ?? res.rows.length }
+        // resulted in res.rowCount being undefined, which then evaluated res.rows.length where
+        // res.rows was also undefined, throwing TypeError: Cannot read properties of undefined (reading 'length').
+        const multiStatementRawPgResult = [
+          { command: 'CREATE', rowCount: null, rows: [] },
+          { command: 'CREATE', rowCount: null, rows: [] },
+          { command: 'CREATE', rowCount: null, rows: [] },
+        ];
+
+        // 1. Verify that the previous un-normalized access would throw TypeError: Cannot read properties of undefined (reading 'length')
+        const previousAccess = () => {
+          const res = multiStatementRawPgResult as any;
+          return {
+            rows: res.rows,
+            rowCount: res.rowCount ?? res.rows.length,
+          };
+        };
+        expect(previousAccess).toThrow(TypeError);
+        expect(previousAccess).toThrow(/Cannot read properties of undefined \(reading 'length'\)/);
+
+        // 2. Verify that normalizePgResult handles the multi-statement array safely without error
+        const normalized = normalizePgResult(multiStatementRawPgResult);
+        expect(normalized.rowCount).toBe(0);
+        expect(normalized.rows).toEqual([]);
+      });
+
+      it('aggregates multi-statement queries returning rows', () => {
+        const multiWithRows = [
+          { command: 'INSERT', rowCount: 1, rows: [{ id: '1' }] },
+          { command: 'INSERT', rowCount: 1, rows: [{ id: '2' }] },
+        ];
+        const normalized = normalizePgResult(multiWithRows);
+        expect(normalized.rowCount).toBe(2);
+        expect(normalized.rows).toHaveLength(2);
+      });
+
+      it('handles null, undefined, and non-object inputs safely', () => {
+        expect(normalizePgResult(null)).toEqual({ rows: [], rowCount: 0 });
+        expect(normalizePgResult(undefined)).toEqual({ rows: [], rowCount: 0 });
+        expect(normalizePgResult('unknown' as any)).toEqual({ rows: [], rowCount: 0 });
+      });
+    });
+
+    describe('Migration lifecycle, idempotency, checksums, and rollback', () => {
+      it('creates _migrations table and records applied migration on first run', async () => {
+        const testPool = new MockPostgresPool();
+        const res = await runMigrations(testPool);
+        expect(res.applied).toHaveLength(1);
+        expect(res.applied[0]).toBe('001_initial_product_schema.sql');
+        expect(res.alreadyApplied).toHaveLength(0);
+
+        const checkRes = await testPool.query<{ name: string; checksum: string }>(
+          'SELECT name, checksum FROM _migrations ORDER BY id ASC;',
+        );
+        expect(checkRes.rows).toHaveLength(1);
+        expect(checkRes.rows[0].name).toBe('001_initial_product_schema.sql');
+        expect(checkRes.rows[0].checksum).toBeDefined();
+        expect(checkRes.rows[0].checksum.length).toBe(64);
+      });
+
+      it('second migration run is a complete no-op (idempotent)', async () => {
+        const testPool = new MockPostgresPool();
+        const res1 = await runMigrations(testPool);
+        expect(res1.applied).toHaveLength(1);
+
+        const res2 = await runMigrations(testPool);
+        expect(res2.applied).toHaveLength(0);
+        expect(res2.alreadyApplied).toHaveLength(1);
+        expect(res2.alreadyApplied[0]).toBe('001_initial_product_schema.sql');
+      });
+
+      it('refuses execution when checksum mismatch is detected on already-applied migration', async () => {
+        const testPool = new MockPostgresPool();
+        const initialSql = 'CREATE TABLE IF NOT EXISTS test_tbl (id VARCHAR(36) PRIMARY KEY);';
+        const mig1 = { name: '001_test.sql', sql: initialSql };
+
+        // Apply initially
+        const res1 = await runMigrations(testPool, [mig1]);
+        expect(res1.applied).toHaveLength(1);
+
+        // Tamper with the migration SQL
+        const tamperedSql = 'CREATE TABLE IF NOT EXISTS test_tbl (id VARCHAR(36) PRIMARY KEY, extra TEXT);';
+        const tamperedMig = { name: '001_test.sql', sql: tamperedSql };
+
+        await expect(runMigrations(testPool, [tamperedMig])).rejects.toThrow(
+          /Migration checksum mismatch for "001_test.sql"/,
+        );
+      });
+
+      it('rolls back transaction on migration failure and records nothing in _migrations', async () => {
+        const testPool = new MockPostgresPool();
+        const failingMig = {
+          name: '999_failing.sql',
+          sql: 'INVALID SQL STATEMENT THAT FAILS TO EXECUTE;',
+        };
+
+        await expect(runMigrations(testPool, [failingMig])).rejects.toThrow(/Syntax error in SQL/);
+
+        // Verify that _migrations remains empty
+        const checkRes = await testPool.query<{ name: string }>(
+          'SELECT name FROM _migrations ORDER BY id ASC;',
+        );
+        expect(checkRes.rows).toHaveLength(0);
+        expect(testPool.inTransaction).toBe(false);
+      });
     });
   });
 });
