@@ -61,15 +61,20 @@ export function buildVerification(
   if (aborted || counts.failed > 0 || counts.blocked > 0) {
     // An interrupted, failed or refused run cannot claim it evaluated the plan.
     status = 'incomplete';
-    coverage = executedSteps === 0 ? 'partial-plan' : 'partial-plan';
+    coverage = 'partial-plan';
+  } else if (counts.passed === 0 || executedSteps === 0) {
+    // Zero meaningful steps passed or executed: run was only skipped or observational.
+    // It cannot claim completion or executed-steps-only coverage.
+    status = 'partial';
+    coverage = 'partial-plan';
   } else if (unverified.length > 0) {
     // The important case: everything executable succeeded, but an expectation
     // was left unchecked. Completion, not success.
     status = 'partial';
     coverage = 'executed-steps-only';
   } else if (counts.skipped > 0) {
-    // Skipped for a benign reason (an observation with no target). Nothing is
-    // unverified, so the executable plan was fully evaluated.
+    // Skipped for a benign reason (an observation with no target) alongside passed steps.
+    // Nothing is unverified, so the executable plan was evaluated.
     status = 'complete';
     coverage = 'executed-steps-only';
   } else {
@@ -120,5 +125,5 @@ export function deriveExecutionStatus(
 
 /** Whether a run may be treated as fully verified. */
 export function isFullyVerified(verification: ExecutionVerification | null): boolean {
-  return verification !== null && verification.status === 'complete' && verification.complete;
+  return verification !== null && verification.status === 'complete' && verification.complete && verification.passedSteps > 0;
 }

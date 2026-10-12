@@ -52,20 +52,21 @@ npm run demo
 ### Action
 Observe terminal output for Scenario 1:
 ```text
-Scenario 1: Healthy Journey & Clean Baseline Creation
+Scenario 1: Healthy Catalog Journey & Baseline Eligibility Gate
   [1/6] Scouting target catalog page...
   [2/6] Planning safe user journey: "explore product catalog and view cart"...
   [3/6] Executing journey plan in headless browser...
   [4/6] Classifying evidence signals for unexpected anomalies...
-  [5/6] Recording verified known-good baseline...
-  [6/6] Reviewing against baseline for candidate regressions...
+  [5/6] Evaluating baseline eligibility & known-good rules...
+  [6/6] Reviewing findings against baseline state...
 ```
 
 ### Key Talking Points
-- **Scout Mapping:** Scout analyzes the DOM and accessibility tree to identify real, clickable elements (`element-001`, `element-002`) without brittle XPath or hard-coded CSS paths.
+- **Scout Mapping:** Scout analyzes the DOM and accessibility tree to identify real, clickable elements without brittle XPath or hard-coded CSS paths.
 - **Journey Immutability:** The planned journey is written to `reports/demo/healthy/journey.json`. It is byte-identical across runs and never mutated during execution.
 - **Safe Test Mode:** Payment controls and destructive actions are automatically blocked by the execution engine.
-- **Clean Baseline:** Because zero anomaly signals occurred, this run qualifies to become a `known-good` baseline reference for future comparisons.
+- **Baseline Eligibility & Trust Invariant:**
+  > *"Notice what happens at step 5: CrashLab's baseline validator checks whether meaningful steps passed. Because the generated journey steps were observational/skipped (0/6 steps passed), CrashLab explicitly REFUSES baseline creation. In CrashLab, 'absence of signals is not evidence of health.' An unexercised run cannot establish a known-good baseline, and CrashLab will never pretend it is a confirmed clean baseline. The review finishes honestly without a baseline, reporting 0 defects and unconfirmed health."*
 
 ---
 

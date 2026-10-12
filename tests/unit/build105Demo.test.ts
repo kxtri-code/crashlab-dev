@@ -9,6 +9,13 @@ import { join } from 'node:path';
 import { startDemoFixtureServer } from '../../src/demo/fixtureServer.js';
 import { cleanDemoArtifacts, DEFAULT_DEMO_OUT_DIR } from '../../src/demo/runner.js';
 import { parseDemoArgs, runDemoCommand } from '../../src/cli/demoCommand.js';
+import { validateBaselineCandidate } from '../../src/baseline/validator.js';
+import { buildBaseline } from '../../src/baseline/writer.js';
+import { buildVerification, isFullyVerified } from '../../src/executor/verification.js';
+import { buildCandidateReport } from '../../src/review/candidateReport.js';
+import type { StepExecutionResult, ExecutionReport } from '../../src/executor/types.js';
+import { anomalyReportWith, checkoutJourney, cleanExecution } from '../fixtures/build6Fixtures.js';
+import { execStep } from '../fixtures/executionReports.js';
 
 describe('Build 10.5: Local Product Demo Unit & Safety Suite', () => {
   let tempDir: string;
@@ -184,6 +191,135 @@ describe('Build 10.5: Local Product Demo Unit & Safety Suite', () => {
       expect(parsed.outDir).not.toContain('http');
       expect(parsed.outDir).not.toContain('password');
       expect(parsed.outDir).not.toContain('key');
+    });
+  });
+
+  describe('6. Baseline Eligibility & Verification Invariants (0/N Passed Runs)', () => {
+    function unexercisedExecution(overrides: Partial<ExecutionReport> = {}): ExecutionReport {
+      const steps: StepExecutionResult[] = [
+        execStep({ id: 'step-001', order: 1, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-002', order: 2, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-003', order: 3, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-004', order: 4, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-005', order: 5, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-006', order: 6, status: 'skipped', skipReason: 'unsupported-prose-assertion' }),
+      ];
+      const verification = buildVerification(steps, false);
+      return cleanExecution({
+        status: 'completed',
+        steps,
+        stepCounts: { total: 6, passed: 0, failed: 0, blocked: 0, skipped: 6 },
+        verification,
+        ...overrides,
+      });
+    }
+
+    it('refuses baseline candidate validation when all steps are skipped (0/N passed)', () => {
+      const exec = unexercisedExecution();
+      const result = validateBaselineCandidate({
+        execution: exec,
+        anomalies: anomalyReportWith([]),
+        journey: checkoutJourney(),
+        acceptedSignalIds: [],
+      });
+
+      expect(result.safe).toBe(false);
+      expect(result.blockers.some((b) => b.includes('Every step was skipped'))).toBe(true);
+      expect(result.blockers.some((b) => b.includes('Zero steps passed'))).toBe(true);
+    });
+
+    it('refuses baseline candidate validation even when allowUnverifiedAssertions is enabled', () => {
+      const exec = unexercisedExecution();
+      const result = validateBaselineCandidate({
+        execution: exec,
+        anomalies: anomalyReportWith([]),
+        journey: checkoutJourney(),
+        acceptedSignalIds: [],
+        allowUnverifiedAssertions: true,
+      });
+
+      expect(result.safe).toBe(false);
+      expect(result.blockers.some((b) => b.includes('Zero steps passed'))).toBe(true);
+      expect(result.blockers.some((b) => b.includes('Every step was skipped'))).toBe(true);
+    });
+
+    it('buildVerification marks 0/N passed run as partial status with partial-plan coverage', () => {
+      const steps: StepExecutionResult[] = [
+        execStep({ id: 'step-001', order: 1, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-002', order: 2, status: 'skipped', skipReason: 'no-target' }),
+        execStep({ id: 'step-003', order: 3, status: 'skipped', skipReason: 'unsupported-prose-assertion' }),
+      ];
+      const verification = buildVerification(steps, false);
+
+      expect(verification.status).toBe('partial');
+      expect(verification.coverage).toBe('partial-plan');
+      expect(verification.complete).toBe(false);
+      expect(verification.passedSteps).toBe(0);
+      expect(verification.executedSteps).toBe(0);
+      expect(verification.skippedSteps).toBe(3);
+      expect(isFullyVerified(verification)).toBe(false);
+    });
+
+    it('isFullyVerified strictly returns false if passedSteps is 0', () => {
+      expect(
+        isFullyVerified({
+          status: 'partial',
+          complete: false,
+          executedSteps: 0,
+          passedSteps: 0,
+          failedSteps: 0,
+          blockedSteps: 0,
+          skippedSteps: 2,
+          unverifiedAssertions: 0,
+          unverifiedStepIds: [],
+          coverage: 'partial-plan',
+        }),
+      ).toBe(false);
+    });
+
+    it('buildBaseline classifies an unexercised run as known-good-partial with partial-plan coverage', () => {
+      const exec = unexercisedExecution();
+      const baseline = buildBaseline({
+        baselineId: 'unexercised-v1',
+        name: 'Unexercised Run',
+        execution: exec,
+        anomalies: anomalyReportWith([]),
+        journey: checkoutJourney(),
+        acceptedSignalIds: [],
+        confirmedBy: 'operator',
+        allowUnverifiedAssertions: true,
+        paths: { execution: 'e.json', anomalies: 'a.json', journey: 'j.json' },
+        now: () => new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      expect(baseline.status).toBe('known-good-partial');
+      expect(baseline.verification.coverage).toBe('partial-plan');
+      expect(baseline.verification.complete).toBe(false);
+      expect(baseline.status).not.toBe('known-good');
+      expect(baseline.verification.coverage).not.toBe('full-plan');
+    });
+
+    it('candidate review against null baseline preserves confirmed: false and confirmedBug: false', () => {
+      const exec = unexercisedExecution();
+      const report = buildCandidateReport({
+        baseline: null,
+        execution: exec,
+        anomalies: anomalyReportWith([]),
+        reproduction: null,
+        journey: checkoutJourney(),
+        paths: {
+          execution: 'e.json',
+          anomalies: 'a.json',
+          reproduction: null,
+          journey: 'j.json',
+          baseline: null,
+        },
+      });
+
+      expect(report.baseline).toBeNull();
+      expect(report.candidates).toHaveLength(0);
+      expect(report.interpretation.confirmedBug).toBe(false);
+      expect(report.candidates.every((c) => c.confirmed === false)).toBe(true);
     });
   });
 });

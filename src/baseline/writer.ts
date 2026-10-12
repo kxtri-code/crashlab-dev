@@ -103,7 +103,11 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
   // `unavailable` for a legacy report rather than being invented.
   const executionVerification = request.execution.verification ?? null;
   const unverifiedAssertions = executionVerification?.unverifiedAssertions ?? 0;
-  const fullyVerified = executionVerification !== null && executionVerification.status === 'complete' && executionVerification.complete;
+  const passedSteps = request.execution.steps?.filter((s) => s.status === 'passed').length ?? 0;
+  const fullyVerified = executionVerification !== null &&
+    executionVerification.status === 'complete' &&
+    executionVerification.complete &&
+    passedSteps > 0;
 
   // A partially verified run is only recorded as such when the operator said so.
   const partialApproved = !fullyVerified && request.allowUnverifiedAssertions === true;
@@ -120,7 +124,7 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
     status = 'known-good-declared';
   } else if (fullyVerified) {
     status = 'known-good';
-  } else if (partialApproved) {
+  } else if (partialApproved || passedSteps === 0 || executionVerification?.status === 'partial') {
     status = 'known-good-partial';
   } else {
     status = 'known-good';
@@ -131,6 +135,10 @@ export function buildBaseline(request: BaselineCreationRequest): Baseline {
     coverage = 'operator-declared';
   } else if (fullyVerified) {
     coverage = 'full-plan';
+  } else if (executionVerification === null) {
+    coverage = 'unavailable';
+  } else if (passedSteps === 0 || executionVerification.executedSteps === 0) {
+    coverage = 'partial-plan';
   } else {
     coverage = executionVerification?.coverage ?? 'unavailable';
   }

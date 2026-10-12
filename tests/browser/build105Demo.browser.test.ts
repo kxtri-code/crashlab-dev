@@ -43,11 +43,13 @@ describe('Build 10.5: Local Product Demo Live Browser Integration', () => {
 
     const scenario = result.scenarios[0]!;
     expect(scenario.name).toBe('Healthy Catalog Journey');
-    expect(scenario.status).toBe('passed');
+    expect(scenario.status).toBe('partial');
     expect(scenario.summary.signalsObserved).toBe(0);
     expect(scenario.summary.candidateCount).toBe(0);
     expect(scenario.summary.confirmedBug).toBe(false);
     expect(scenario.summary.confirmed).toBe(false);
+    expect(scenario.summary.baselineRefused).toBe(true);
+    expect(scenario.summary.baselineRefusalReason).toMatch(/Every step was skipped|Zero steps passed/);
 
     // Verify written report files exist
     const execPath = scenario.artifacts.execution!;
@@ -61,21 +63,23 @@ describe('Build 10.5: Local Product Demo Live Browser Integration', () => {
     expect(execReport.stepCounts.failed).toBe(0);
     expect(execReport.stepCounts.total).toBeGreaterThanOrEqual(1);
 
-    // Verify baseline artifact
-    const baselinePath = scenario.artifacts.baseline!;
-    expect(baselinePath).toBeDefined();
-    const baselineContent = await readFile(baselinePath, 'utf8');
-    const baselineDoc = JSON.parse(baselineContent);
-    expect(baselineDoc.schemaVersion).toBe('1.0');
-    expect(baselineDoc.baselineId).toBe('demo-healthy-baseline');
+    // Verification metadata confirms unexercised/partial status
+    expect(execReport.verification.status).toBe('partial');
+    expect(execReport.verification.coverage).toBe('partial-plan');
+    expect(execReport.verification.complete).toBe(false);
+    expect(execReport.verification.passedSteps).toBe(0);
 
-    // Verify candidate findings (0 candidates on healthy run)
+    // Verify baseline was honestly refused (not created)
+    expect(scenario.artifacts.baseline).toBeNull();
+
+    // Verify candidate findings (0 candidates on unbaselined clean run)
     const candPath = scenario.artifacts.candidates!;
     expect(candPath).toBeDefined();
     const candContent = await readFile(candPath, 'utf8');
     const candReport = JSON.parse(candContent);
     expect(candReport.candidates).toHaveLength(0);
     expect(candReport.interpretation.confirmedBug).toBe(false);
+    expect(candReport.baseline).toBeNull();
   });
 
   it('2. Controlled Failure Scenario: detects HTTP_5XX, runs 3x bounded reproduction, and creates candidates with confirmedBug: false', async () => {

@@ -145,7 +145,7 @@ describe('Build 10: Complete End-to-End Pipeline Browser Validation', () => {
       confirmedBy: 'e2e-validator',
       paths: { execution: execPath, anomalies: 'anomalies.json', journey: planPath },
     });
-    expect(rootBaseline.status).toBe('known-good');
+    expect(rootBaseline.status).toBe('known-good-partial');
     expect(rootBaseline.knownSignals.length).toBe(0);
 
     const baselineDir = join(tempDir, 'baselines');

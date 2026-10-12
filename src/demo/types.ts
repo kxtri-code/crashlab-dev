@@ -34,14 +34,14 @@ export interface DemoDependencies {
 export interface DemoScenarioResult {
   name: string;
   scenario: 'healthy' | 'failure';
-  status: 'passed' | 'failed';
+  status: 'passed' | 'failed' | 'partial';
   durationMs: number;
   artifacts: {
     scout?: string;
     journey?: string;
     execution?: string;
     anomalies?: string;
-    baseline?: string;
+    baseline?: string | null;
     reproduction?: string;
     candidates?: string;
     reviewState?: string;
@@ -54,6 +54,9 @@ export interface DemoScenarioResult {
     candidateCount?: number;
     confirmedBug: false;
     confirmed: false;
+    baselineCreated?: boolean;
+    baselineRefused?: boolean;
+    baselineRefusalReason?: string | null;
   };
   reports?: {
     journey?: JourneyPlan;

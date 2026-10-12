@@ -68,16 +68,17 @@ npm run demo -- --clean
 
 ## 3. Demonstration Scenarios
 
-### Scenario 1: Healthy Journey & Clean Baseline
+### Scenario 1: Healthy Catalog Journey & Baseline Eligibility Gate
 - **Target:** `http://127.0.0.1:<port>/` (Local Synthetic Widget Catalog)
 - **Goal:** `"explore product catalog and view cart"`
 - **Pipeline Stages:**
   1. **Scout:** Discovers catalog elements, interactive buttons, and navigation links.
-  2. **Journey Planner:** Generates an ordered, immutable 2-step journey plan.
-  3. **Executor:** Launches a clean headless browser context, executes clicks, and verifies safe navigation.
+  2. **Journey Planner:** Generates an ordered, immutable journey plan.
+  3. **Executor:** Launches a clean headless browser context and records raw execution evidence.
   4. **Anomaly Engine:** Analyzes raw evidence and classifies 0 anomaly signals.
-  5. **Baseline Registry:** Registers `reports/demo/healthy/baseline.json` as a known-good reference.
-  6. **Candidate Review:** Compares the run against the baseline, confirming **0 candidate defects**.
+  5. **Baseline Eligibility Gate:** Evaluates candidate execution against strict baseline eligibility rules. When zero meaningful steps passed (all skipped/observational), CrashLab **refuses** baseline creation under the core trust principle:
+     > *"Absence of signals is not evidence of health. A run that only skipped steps cannot establish a verified known-good baseline."*
+  6. **Candidate Review:** Conducts candidate review without a baseline (`baseline: null`), confirming **0 candidate defects** while classifying execution status as `partial` and health as unconfirmed.
 
 ### Scenario 2: Controlled HTTP 500 Fault & Bounded Reproduction
 - **Target:** `http://127.0.0.1:<port>/boom` (Synthetic server error route)
@@ -104,7 +105,7 @@ reports/demo/
 │   ├── journey.json       # Pure, deterministic user journey plan
 │   ├── execution.json     # Execution log, timing, and raw evidence
 │   ├── anomalies.json     # Signal classifications (0 signals)
-│   ├── baseline.json      # Registered known-good baseline reference
+│   ├── baseline.json      # Only registered if journey steps pass (omitted when refused)
 │   └── candidates.json    # Candidate findings comparison (0 candidates)
 │
 └── controlled-failure/
@@ -188,9 +189,11 @@ An automated tool cannot know product intent. What appears to be an error might 
 - **Consistent Evidence Capture:** Console errors, network codes, and page errors are recorded faithfully.
 - **Reproducibility:** Distinguishes between one-off transient flakes and persistently recurring signals.
 - **Safety Compliance:** Safe-test mode, payment blocking, and loopback restrictions are rigorously enforced.
+- **Strict Baseline Eligibility:** Refuses to register a baseline or claim a clean run when zero meaningful steps executed or passed. Absence of signals is never treated as proof of health.
 
 ### What CrashLab Cannot Prove:
 - **Absence of Defects:** A clean run proves that the tested journey succeeded under observed conditions; it does not prove the target is bug-free.
+- **Health of Unexercised Paths:** An unexercised run (e.g. 0/N passed steps) proves only that no unexpected crash was detected during discovery; CrashLab classifies this as `partial` and refuses to establish a known-good baseline.
 - **Business Logic Correctness:** Automated agents cannot determine whether complex business rules or pricing calculations meet business intent without human verification.
 - **Staging Readiness:** Local synthetic testing validates toolchain mechanics, not target system stability. Real staging pilots remain blocked until explicit authorization is granted.
 

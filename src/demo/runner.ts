@@ -23,6 +23,9 @@ import { buildAnomalyReport } from '../anomaly/report.js';
 import { reproduceSignals } from '../reproducer/reproducer.js';
 import { buildCandidateReport } from '../review/candidateReport.js';
 import { buildBaseline } from '../baseline/writer.js';
+import { validateBaselineCandidate } from '../baseline/validator.js';
+import type { Baseline } from '../baseline/types.js';
+import type { CandidateReport } from '../review/types.js';
 import { recordReviewEvent } from '../review/reviewStateStore.js';
 import { writeReport } from '../report/write.js';
 import { startDemoFixtureServer, type DemoFixtureHandle } from './fixtureServer.js';
@@ -177,52 +180,101 @@ export async function runDemo(options: DemoOptions = {}): Promise<DemoRunResult>
       await writeFn(anomalies, anomPath);
       log(`        Anomalies classified: ${anomalies.summary.totalSignals} signals (clean run).`);
 
-      // Step 5: Clean Baseline
-      log('  [5/6] Recording verified known-good baseline...');
-      const baselinePath = join(healthyDir, 'baseline.json');
-      const baseline = buildBaseline({
-        baselineId: 'demo-healthy-baseline',
-        name: 'Demo Healthy Synthetic Baseline',
+      // Step 5: Clean Baseline Eligibility Validation
+      log('  [5/6] Validating baseline eligibility against CrashLab trust rules...');
+      const baselineValidation = validateBaselineCandidate({
         execution: exec,
         anomalies,
         journey: plan,
         acceptedSignalIds: [],
-        confirmedBy: 'demo-operator',
+        allowUnverifiedAssertions: false,
         paths: {
           execution: execPath,
           anomalies: anomPath,
           journey: planPath,
         },
-        allowUnverifiedAssertions: true,
       });
-      await writeFn(baseline, baselinePath);
-      log(`        Baseline registered (${baseline.baselineId}).`);
 
-      // Step 6: Review comparison against baseline
-      log('  [6/6] Reviewing against baseline for candidate regressions...');
+      let baseline: Baseline | null = null;
+      let baselinePath: string | null = null;
+
+      if (!baselineValidation.safe) {
+        log('        Baseline creation REFUSED (Trust Invariant: Absence of signals is not evidence of health):');
+        for (const blocker of baselineValidation.blockers) {
+          log(`          - ${blocker}`);
+        }
+        log(`        Status: partial / unexercised (${exec.stepCounts.passed}/${exec.stepCounts.total} steps passed, ${exec.verification?.executedSteps ?? 0} executed).`);
+        log('        Semantics: A run that only skipped steps cannot establish a verified known-good baseline.');
+      } else {
+        baselinePath = join(healthyDir, 'baseline.json');
+        baseline = buildBaseline({
+          baselineId: 'demo-healthy-baseline',
+          name: 'Demo Healthy Synthetic Baseline',
+          execution: exec,
+          anomalies,
+          journey: plan,
+          acceptedSignalIds: [],
+          confirmedBy: 'demo-operator',
+          paths: {
+            execution: execPath,
+            anomalies: anomPath,
+            journey: planPath,
+          },
+          allowUnverifiedAssertions: false,
+        });
+        await writeFn(baseline, baselinePath);
+        log(`        Baseline registered (${baseline.baselineId}).`);
+      }
+
+      // Step 6: Candidate review
       const candPath = join(healthyDir, 'candidates.json');
-      const candidates = buildCandidateReport({
-        execution: exec,
-        anomalies,
-        reproduction: null,
-        journey: plan,
-        baseline,
-        paths: {
-          execution: execPath,
-          anomalies: anomPath,
+      let candidates: CandidateReport;
+
+      if (baseline) {
+        log('  [6/6] Reviewing against baseline for candidate regressions...');
+        candidates = buildCandidateReport({
+          execution: exec,
+          anomalies,
           reproduction: null,
-          journey: planPath,
-          baseline: baselinePath,
-        },
-      });
-      await writeFn(candidates, candPath);
-      log(`        Candidate review completed: ${candidates.candidates.length} candidate defects (clean run confirmed).`);
+          journey: plan,
+          baseline,
+          paths: {
+            execution: execPath,
+            anomalies: anomPath,
+            reproduction: null,
+            journey: planPath,
+            baseline: baselinePath!,
+          },
+        });
+        await writeFn(candidates, candPath);
+        log(`        Candidate review completed: ${candidates.candidates.length} candidate defect(s).`);
+      } else {
+        log('  [6/6] Reviewing findings without baseline...');
+        candidates = buildCandidateReport({
+          execution: exec,
+          anomalies,
+          reproduction: null,
+          journey: plan,
+          baseline: null,
+          paths: {
+            execution: execPath,
+            anomalies: anomPath,
+            reproduction: null,
+            journey: planPath,
+            baseline: null,
+          },
+        });
+        await writeFn(candidates, candPath);
+        log(`        Review completed without baseline: ${candidates.candidates.length} candidate findings.`);
+        log('        Trust Invariant: Health remains UNCONFIRMED (no baseline established; zero steps executed).');
+      }
 
       const durationMs = Date.now() - startTime;
+      const scenarioStatus = baselineValidation.safe ? 'passed' : 'partial';
       scenarios.push({
         name: 'Healthy Catalog Journey',
         scenario: 'healthy',
-        status: 'passed',
+        status: scenarioStatus,
         durationMs,
         artifacts: {
           scout: scoutPath,
@@ -238,12 +290,15 @@ export async function runDemo(options: DemoOptions = {}): Promise<DemoRunResult>
           candidateCount: candidates.candidates.length,
           confirmedBug: false,
           confirmed: false,
+          baselineCreated: baselineValidation.safe,
+          baselineRefused: !baselineValidation.safe,
+          baselineRefusalReason: baselineValidation.safe ? null : baselineValidation.blockers.join('; '),
         },
         reports: {
           journey: plan,
           execution: exec,
           anomalies,
-          baseline,
+          baseline: baseline ?? undefined,
           candidates,
         },
       });

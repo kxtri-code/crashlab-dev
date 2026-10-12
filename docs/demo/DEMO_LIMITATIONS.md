@@ -70,3 +70,19 @@ CrashLab contains a preflight execution gate (Build 10.2 & 10.3) that prohibits 
 - Dangerous and destructive operations are covered by mandatory forbidden action declarations.
 
 Until these conditions are met and signed off by application owners, **the real staging pilot remains strictly blocked**. The local demo provides a safe, risk-free alternative for evaluating CrashLab's capabilities.
+
+---
+
+## 5. Why an Unexercised Run Cannot Establish a Baseline
+
+CrashLab strictly enforces the foundational principle:
+
+> **Absence of failure signals is not evidence of health.**
+
+When an execution exercises zero meaningful steps or when all steps are skipped/observational (`0/N steps passed`):
+- Verification status is classified as `partial`.
+- Verification coverage is classified as `partial-plan` (never `full-plan` or `executed-steps-only`).
+- Baseline creation is **strictly refused** by `validateBaselineCandidate`.
+- No baseline artifact is emitted, and health remains unconfirmed.
+
+Weakening baseline rules to treat unexercised runs as "known-good" would erode user trust and mask latent faults. CrashLab requires actual passed step execution before certifying a baseline reference.

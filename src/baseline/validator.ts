@@ -184,10 +184,16 @@ export function validateBaselineCandidate(input: BaselineValidationInput): Basel
   }
 
   const stepStatuses = (input.execution.steps ?? []).map((step) => step.status);
+  const passedSteps = stepStatuses.filter((stepStatus) => stepStatus === 'passed').length;
   if (stepStatuses.length > 0 && stepStatuses.every((stepStatus) => stepStatus === 'skipped')) {
     // Every step skipped means the journey never acted. A baseline from this
     // would claim a healthy page it never actually exercised.
     blockers.push('Every step was skipped, so the run never exercised the journey.');
+  }
+  if (stepStatuses.length > 0 && passedSteps === 0) {
+    blockers.push(
+      'Zero steps passed during execution. A baseline requires at least one passed step to confirm meaningful journey execution.',
+    );
   }
   if (stepStatuses.every((stepStatus) => stepStatus === 'blocked')) {
     blockers.push('Every step was blocked, so the run never exercised the journey.');
