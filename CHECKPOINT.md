@@ -530,3 +530,35 @@ A verified, hardened snapshot verifying the complete CrashLab pipeline through t
    - Healthy route run produces clean baseline with 0 anomalies → verified in isolated directory.
 4. **Refusal & Safety Gate:**
    - Unapproved/staging/production-like configurations rejected at preflight with 0 browser launches, 0 network requests, and 0 evidence reports created.
+
+---
+
+## Build 11 Checkpoint: Hosted MVP Architecture & Productization Foundation
+
+- **Checkpoint tag:** `build11-hosted-mvp`
+- **Scope:** Provider-neutral domain contracts, tenant isolation model, repository abstractions, run lifecycle state machine, secret boundary sanitization, and minimal REST API foundation.
+
+---
+
+## Build 12A Checkpoint: PostgreSQL / Supabase Persistence Adapter
+
+A fully verified, relational persistence adapter satisfying the provider-neutral repository interfaces of Build 11.
+
+- **Checkpoint tag:** `build12a-postgres-adapter`
+- **Scope:** Complete PostgreSQL repository adapter (`PostgresProductRepository`), transactional SQL migration runner (`runMigrations`), connection pool abstraction with error sanitization (`createPgPool`), parameterization verification (`MockPostgresPool`), CLI commands (`npm run db:check`, `npm run db:migrate`), and contract equivalence test suite.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,225 passed** (42 files) |
+| Browser test suite (`npm run test:browser`) | **176 passed** (12 files) |
+| Build 12A unit tests (`build12aPostgresPersistence.test.ts`) | **26 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Parameterized SQL | 100% queries parameterized (`$1, $2, ...`) |
+| In-memory repository equivalence | All contract tests pass identically on both adapters |
+| Secret persistence attempts | 100% blocked before SQL execution |
+| External database connection required | **0** (tests run with mock/in-memory adapter) |
+| External network calls / AI / Billing | **0** |

@@ -32,6 +32,8 @@ import { REVIEW_UI_USAGE, runReviewUiCommand } from './cli/reviewUiCommand.js';
 import { PREFLIGHT_USAGE, runPreflightCommand } from './cli/preflightCommand.js';
 import { PILOT_USAGE, runPilotCommand } from './cli/pilotCommand.js';
 import { DEMO_USAGE, runDemoCommand } from './cli/demoCommand.js';
+import { DB_CHECK_USAGE, runDbCheckCommand } from './cli/dbCheckCommand.js';
+import { DB_MIGRATE_USAGE, runDbMigrateCommand } from './cli/dbMigrateCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -70,6 +72,8 @@ Usage:
   npm run pilot-preflight -- --config <path>
   npm run pilot -- --config <path> --preflight-only
   npm run demo [options]
+  npm run db:check
+  npm run db:migrate
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -85,6 +89,8 @@ Commands:
   pilot-preflight Validate a protected pilot configuration (Build 10.2)
   pilot          Run pilot execution gated by preflight safety checks (Build 10.3)
   demo           Run automated local product demonstration (Build 10.5)
+  db:check       Check PostgreSQL/Supabase database connectivity (Build 12A)
+  db:migrate     Run schema migrations against PostgreSQL/Supabase (Build 12A)
   help           Show this message
   version        Print the build version
 
@@ -428,6 +434,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runDemoCommand(rest);
+  }
+
+  if (first === 'db:check') {
+    return runDbCheckCommand(rest);
+  }
+
+  if (first === 'db:migrate') {
+    return runDbMigrateCommand(rest);
   }
 
   return main([...argv]);

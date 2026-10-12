@@ -47,6 +47,11 @@ This repository contains five builds, with two integration milestones layered on
 - **Build 10.5 — Local Product Demo Package** (`npm run demo`): single-command, beginner-friendly
   local demonstration running the complete CrashLab pipeline (healthy & controlled failure scenarios)
   against synthetic loopback fixtures with zero external traffic, credentials, or payments.
+- **Build 11 — Hosted MVP Architecture & Productization Foundation**: provider-neutral repository
+  interfaces, tenant isolation model, run lifecycle state machine, secret boundaries, and minimal REST API foundation.
+- **Build 12A — PostgreSQL / Supabase Persistence Adapter** (`npm run db:check`, `npm run db:migrate`):
+  production-ready PostgreSQL repository implementation with parameterized SQL, transactional schema migrations,
+  connection pooling, and multi-tenant query isolation.
 
 Each build is a separate artifact, and no build rewrites another's:
 

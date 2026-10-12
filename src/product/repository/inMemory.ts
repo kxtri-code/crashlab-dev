@@ -210,6 +210,11 @@ export class InMemoryProjectRepository implements ProjectRepository {
     if (this.projects.has(project.id)) {
       throw new Error(`Project with ID "${project.id}" already exists.`);
     }
+    for (const existing of this.projects.values()) {
+      if (existing.workspaceId === project.workspaceId && existing.name.toLowerCase() === project.name.toLowerCase()) {
+        throw new Error(`Project with name "${project.name}" already exists in workspace "${project.workspaceId}".`);
+      }
+    }
     this.projects.set(project.id, clone(project));
     return clone(project);
   }
