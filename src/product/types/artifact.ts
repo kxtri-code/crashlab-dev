@@ -14,7 +14,12 @@ export type ArtifactType =
   | 'candidates'
   | 'baseline'
   | 'preflight'
-  | 'review-events';
+  | 'review-events'
+  | 'screenshot'
+  | 'trace'
+  | 'har'
+  | 'report'
+  | 'log';
 
 export interface RunArtifact {
   readonly id: string;
@@ -37,4 +42,13 @@ export interface RegisterArtifactInput {
   readonly byteSize: number;
   readonly sha256: string;
   readonly contentType?: string;
+}
+
+export interface StoreArtifactInput {
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly type: ArtifactType;
+  readonly content: Buffer | Uint8Array | string;
+  readonly contentType?: string;
+  readonly customArtifactId?: string;
 }

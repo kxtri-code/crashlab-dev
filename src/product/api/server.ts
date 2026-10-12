@@ -21,6 +21,9 @@ import type { ProductStorageType } from '../storage.js';
 import { resolveProductRepositories } from '../storage.js';
 import type { AuthConfig, AuthMode } from '../auth/identity.js';
 import { loadAuthConfigFromEnv } from '../auth/identity.js';
+import type { BlobStore } from '../blob/interfaces.js';
+import type { BlobStoreConfig } from '../blob/config.js';
+import { resolveBlobStore } from '../blob/config.js';
 import type { IdGenerator } from '../util/id.js';
 
 export interface ProductApiServerOptions {
@@ -31,6 +34,9 @@ export interface ProductApiServerOptions {
   readonly storage?: ProductStorageType;
   readonly databaseUrl?: string;
   readonly pool?: PostgresPool;
+  readonly blobStore?: BlobStore;
+  readonly blobStoreConfig?: BlobStoreConfig;
+  readonly blobRoot?: string;
   readonly authConfig?: AuthConfig;
   readonly authMode?: AuthMode;
   readonly authSecret?: string;
@@ -44,6 +50,7 @@ export class ProductApiServer {
   private readonly port: number;
   private readonly service: ProductService;
   private readonly ownedPool?: PostgresPool;
+  private readonly ownedBlobStore?: BlobStore;
   private activeUrl: string | null = null;
   private activePort: number | null = null;
 
@@ -55,6 +62,7 @@ export class ProductApiServer {
     if (options.service) {
       this.service = options.service;
       this.ownedPool = options.pool;
+      this.ownedBlobStore = options.blobStore;
     } else {
       const resolved = resolveProductRepositories({
         storage: options.storage,
@@ -62,11 +70,21 @@ export class ProductApiServer {
         pool: options.pool,
         repositories: options.repositories,
       });
+
+      const blobStore =
+        options.blobStore ??
+        resolveBlobStore({
+          config: options.blobStoreConfig,
+          localRoot: options.blobRoot,
+        });
+
       this.service = new ProductService({
         repositories: resolved.repositories,
+        blobStore,
         idGenerator: options.idGenerator,
       });
       this.ownedPool = resolved.pool;
+      this.ownedBlobStore = options.blobStore ? undefined : blobStore;
     }
 
     // 2. Resolve authentication configuration
@@ -128,6 +146,10 @@ export class ProductApiServer {
     return this.service;
   }
 
+  get blobStore(): BlobStore {
+    return this.service.blobStore;
+  }
+
   async start(): Promise<{ url: string; port: number }> {
     return new Promise((resolve, reject) => {
       this.server.on('error', reject);
@@ -141,13 +163,20 @@ export class ProductApiServer {
   }
 
   async stop(): Promise<void> {
+    const cleanupResources = async () => {
+      if (this.ownedBlobStore) {
+        try {
+          await this.ownedBlobStore.close();
+        } catch {}
+      }
+      if (this.ownedPool) {
+        await this.ownedPool.end();
+      }
+    };
+
     return new Promise((resolve, reject) => {
       if (!this.server.listening) {
-        if (this.ownedPool) {
-          this.ownedPool.end().then(() => resolve(), reject);
-        } else {
-          resolve();
-        }
+        cleanupResources().then(() => resolve(), reject);
         return;
       }
       this.server.close(async (err) => {
@@ -155,15 +184,11 @@ export class ProductApiServer {
           reject(err);
           return;
         }
-        if (this.ownedPool) {
-          try {
-            await this.ownedPool.end();
-            resolve();
-          } catch (poolErr) {
-            reject(poolErr);
-          }
-        } else {
+        try {
+          await cleanupResources();
           resolve();
+        } catch (cleanupErr) {
+          reject(cleanupErr);
         }
       });
     });

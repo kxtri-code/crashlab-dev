@@ -21,7 +21,9 @@ export type AuditEventType =
   | 'run.transitioned'
   | 'candidate.reviewed'
   | 'auth.success'
-  | 'auth.failed';
+  | 'auth.failed'
+  | 'artifact.stored'
+  | 'artifact.deleted';
 
 export interface AuditEvent {
   readonly id: string;

@@ -595,3 +595,29 @@ A verified snapshot replacing request-header-only identity with a real authentic
 | Storage provider selection | Explicit (`in-memory` vs `postgres`); missing `DATABASE_URL` fails clearly |
 | Request correlation | `X-Request-Id` generated and propagated on all responses |
 | External network / AI / Billing / Browser | **0** |
+
+---
+
+## Build 12B.2A Checkpoint: Secure Artifact Blob Storage
+
+A verified snapshot implementing a provider-neutral physical blob storage layer for test execution payloads (screenshots, traces, HAR recordings, reports, and JSON evidence) while maintaining strict tenant isolation, cryptographic immutability, and path traversal guards.
+
+- **Checkpoint tag:** `build12b2a-blob-storage`
+- **Scope:** Provider-neutral `BlobStore` contract, secure `LocalBlobStore` adapter with atomic writes via temp file and rename, path traversal defense, symlink boundary protection, optional `S3CompatibleBlobStore` adapter with mock verification, `ProductService` transactional artifact storage with automatic blob cleanup on DB failure, tenant-scoped API routes (`POST /api/v1/runs/:runId/artifacts`, `GET /api/v1/runs/:runId/artifacts`, `GET /api/v1/artifacts/:artifactId`, `GET /api/v1/artifacts/:artifactId/content`), zero local filesystem path leaks, and comprehensive test suite.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,288 passed** (44 files) |
+| Browser test suite (`npm run test:browser`) | **176 passed** (12 files) |
+| Build 12B.2A tests (`build12b2aBlobStorage.test.ts`) | **26 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Path traversal protection | Rejects `..`, path separators in IDs, control chars, null bytes |
+| Artifact immutability | Rejects conflicting overwrites; allows idempotent duplicate writes |
+| Absolute path leakage | Zero server paths returned in API responses or stored in database |
+| Transactional integrity | Cleans up newly written blob if relational metadata insert fails |
+| Tenant security | Cross-workspace artifact requests return 403 / 404 |
+| External network / AI / Billing / Browser | **0** |

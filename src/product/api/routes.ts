@@ -16,6 +16,7 @@ import type { ApiResponse, HealthResponse } from './types.js';
 import type { AuthConfig } from '../auth/identity.js';
 import { loadAuthConfigFromEnv } from '../auth/identity.js';
 import { authenticateRequest } from '../auth/middleware.js';
+import type { ArtifactType } from '../types/artifact.js';
 import type { IdGenerator } from '../util/id.js';
 
 export interface RouteHandlerContext {
@@ -253,8 +254,59 @@ export async function handleProductApiRequest(
       return;
     }
 
-    // Run artifacts endpoint: /api/v1/runs/:runId/artifacts
+    // Upload/store artifact endpoint: POST /api/v1/runs/:runId/artifacts
     const runArtifactsMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/artifacts$/);
+    if (runArtifactsMatch && method === 'POST') {
+      const runId = runArtifactsMatch[1]!;
+      const body = await parseBody<{
+        workspaceId?: string;
+        type: ArtifactType;
+        content: string | Record<string, unknown>;
+        contentType?: string;
+        encoding?: 'utf8' | 'base64';
+      }>(req);
+
+      const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        return;
+      }
+      if (!body.type) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "type".', requestId);
+        return;
+      }
+      if (body.content === undefined || body.content === null) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "content".', requestId);
+        return;
+      }
+
+      targetedWorkspaceId = workspaceId;
+
+      let buffer: Buffer;
+      if (body.encoding === 'base64' && typeof body.content === 'string') {
+        buffer = Buffer.from(body.content, 'base64');
+      } else if (typeof body.content === 'object') {
+        buffer = Buffer.from(JSON.stringify(body.content, null, 2), 'utf8');
+      } else {
+        buffer = Buffer.from(String(body.content), 'utf8');
+      }
+
+      const stored = await context.service.storeArtifact(
+        {
+          workspaceId,
+          runId,
+          type: body.type,
+          content: buffer,
+          contentType: body.contentType ?? (typeof body.content === 'object' ? 'application/json' : 'text/plain'),
+        },
+        actorUserId,
+      );
+
+      sendJson(res, 201, { success: true, data: stored, requestId }, requestId);
+      return;
+    }
+
+    // List run artifacts endpoint: GET /api/v1/runs/:runId/artifacts
     if (runArtifactsMatch && method === 'GET') {
       const runId = runArtifactsMatch[1]!;
       const workspaceId = searchParams.get('workspaceId');
@@ -265,6 +317,46 @@ export async function handleProductApiRequest(
       targetedWorkspaceId = workspaceId;
       const artifacts = await context.service.listArtifacts(workspaceId, runId, actorUserId);
       sendJson(res, 200, { success: true, data: { artifacts }, requestId }, requestId);
+      return;
+    }
+
+    // Artifact detail endpoint: GET /api/v1/artifacts/:artifactId
+    const artifactDetailMatch = pathname.match(/^\/api\/v1\/artifacts\/([^/]+)$/);
+    if (artifactDetailMatch && method === 'GET') {
+      const artifactId = artifactDetailMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const artifact = await context.service.getArtifact(workspaceId, artifactId, actorUserId);
+      sendJson(res, 200, { success: true, data: artifact, requestId }, requestId);
+      return;
+    }
+
+    // Artifact download endpoint: GET /api/v1/artifacts/:artifactId/content
+    const artifactContentMatch = pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/);
+    if (artifactContentMatch && method === 'GET') {
+      const artifactId = artifactContentMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const { artifact, payload } = await context.service.getArtifactContent(workspaceId, artifactId, actorUserId);
+
+      res.writeHead(200, {
+        'content-type': artifact.contentType,
+        'content-length': String(payload.content.length),
+        'etag': `"${artifact.sha256}"`,
+        'x-artifact-type': artifact.type,
+        'x-artifact-sha256': artifact.sha256,
+        'x-request-id': requestId,
+        'cache-control': 'private, no-transform',
+      });
+      res.end(payload.content);
       return;
     }
 

@@ -55,9 +55,16 @@ Return Tenant-Scoped Entity (with X-Request-Id)
 - **Timing-Safe Comparison:** Signatures are evaluated using timing-safe comparisons to eliminate side-channel timing leaks.
 - **Request Tracing:** Every request receives a unique `requestId` (`req_...`) propagated in response headers (`X-Request-Id`).
 
-### 2.1 Repository-Level Isolation
+### 2.2 Repository-Level Isolation
 - Every query method that reads customer-owned entities (`projects`, `targets`, `journeys`, `runs`, `artifacts`, `candidates`, `audits`) requires an explicit `workspaceId` parameter.
 - Cross-tenant queries are structurally prevented: searching for an entity belonging to Workspace B with a Workspace A token returns `null` or `404 Not Found`.
+
+### 2.3 Physical Blob Storage Boundary (Build 12B.2A)
+- **Path Traversal Protection:** All storage keys follow the deterministic format `workspace/<workspaceId>/project/<projectId>/run/<runId>/artifact/<artifactId>`. Slashes, `..`, null bytes, and non-alphanumeric special characters are rejected at the locator validation boundary.
+- **Root Confinement:** All file access is bounded by `PRODUCT_BLOB_ROOT`. Prohibits symlinks pointing outside the storage root.
+- **Zero Local Path Exposure:** Database records and API responses expose only relative storage keys (`storagePath`); absolute server filesystem paths are never leaked.
+- **Cryptographic Immutability:** Artifacts calculate and verify SHA-256 hashes upon storage. Conflicting overwrites of existing artifacts are strictly prohibited.
+- **Authorization Before Access:** Reading or downloading artifact binary payloads requires workspace membership and role authorization (`viewer`, `reviewer`, `member`, `owner`). Cross-workspace downloads return 403 Forbidden.
 
 ---
 

@@ -15,10 +15,12 @@ import type { Project, CreateProjectInput } from '../types/project.js';
 import type { TargetEnvironment, CreateTargetEnvironmentInput } from '../types/target.js';
 import type { ProductApprovedJourney, CreateApprovedJourneyInput } from '../types/journey.js';
 import type { TestRun, CreateTestRunInput, RunStatus } from '../types/run.js';
-import type { RunArtifact, RegisterArtifactInput } from '../types/artifact.js';
+import type { RunArtifact, RegisterArtifactInput, StoreArtifactInput } from '../types/artifact.js';
 import type { CandidateReference, RegisterCandidateReferenceInput, ProductCandidateStatus } from '../types/candidate.js';
 import type { AuditEvent } from '../types/audit.js';
 import type { ProductRepositories } from '../repository/interfaces.js';
+import type { BlobStore, BlobLocator, BlobMetadata, BlobPayload } from '../blob/interfaces.js';
+import { resolveBlobStore } from '../blob/config.js';
 import type { IdGenerator } from '../util/id.js';
 import { defaultIdGenerator } from '../util/id.js';
 import {
@@ -59,19 +61,26 @@ export class PreflightRefusedError extends Error {
 
 export interface ProductServiceDependencies {
   readonly repositories: ProductRepositories;
+  readonly blobStore?: BlobStore;
   readonly idGenerator?: IdGenerator;
   readonly now?: () => Date;
 }
 
 export class ProductService {
   private readonly repos: ProductRepositories;
+  private readonly blobs: BlobStore;
   private readonly ids: IdGenerator;
   private readonly clock: () => Date;
 
   constructor(deps: ProductServiceDependencies) {
     this.repos = deps.repositories;
+    this.blobs = deps.blobStore ?? resolveBlobStore();
     this.ids = deps.idGenerator ?? defaultIdGenerator;
     this.clock = deps.now ?? (() => new Date());
+  }
+
+  get blobStore(): BlobStore {
+    return this.blobs;
   }
 
   private timestamp(): string {
@@ -665,6 +674,84 @@ export class ProductService {
 
   // --- Run Artifacts ---------------------------------------------------------
 
+  /**
+   * Stores a physical artifact blob and records its metadata record transactionally.
+   * Enforces:
+   * 1. Workspace membership & canRunProject permission
+   * 2. Secret sanitization
+   * 3. Physical blob storage via BlobStore
+   * 4. Relational database record creation
+   * 5. Blob cleanup if database record creation fails
+   * 6. Audit event recording
+   */
+  async storeArtifact(
+    input: StoreArtifactInput,
+    actorUserId: string,
+  ): Promise<{ artifact: RunArtifact; blob: BlobMetadata }> {
+    assertNoSecrets(input, 'StoreArtifactInput');
+    const membership = await this.getMembership(input.workspaceId, actorUserId);
+    if (!canRunProject(membership, { workspaceId: input.workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied to store artifacts in workspace "${input.workspaceId}".`);
+    }
+
+    const run = await this.repos.runs.findById(input.workspaceId, input.runId);
+    if (!run) {
+      throw new EntityNotFoundError(`TestRun "${input.runId}" not found in workspace "${input.workspaceId}".`);
+    }
+
+    const artifactId = input.customArtifactId ?? this.ids.generateId('art');
+    const locator: BlobLocator = {
+      workspaceId: input.workspaceId,
+      projectId: run.projectId,
+      runId: input.runId,
+      artifactId,
+    };
+
+    // 1. Write physical blob
+    const blob = await this.blobs.put({
+      ...locator,
+      contentType: input.contentType ?? 'application/json',
+      content: input.content,
+    });
+
+    const ts = this.timestamp();
+    const artifactRecord: RunArtifact = {
+      id: artifactId,
+      schemaVersion: '1.0',
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      type: input.type,
+      storagePath: blob.safeObjectKey,
+      byteSize: blob.byteLength,
+      sha256: blob.checksum,
+      contentType: blob.contentType,
+      createdAt: ts,
+    };
+
+    let savedArtifact: RunArtifact;
+    try {
+      savedArtifact = await this.repos.artifacts.create(artifactRecord);
+    } catch (dbErr) {
+      // 2. Clean up written blob if metadata persistence fails
+      try {
+        await this.blobs.delete(locator);
+      } catch {
+        // Best-effort cleanup
+      }
+      throw dbErr;
+    }
+
+    await this.recordAudit(input.workspaceId, actorUserId, 'artifact.stored', 'run_artifact', artifactId, {
+      runId: input.runId,
+      type: input.type,
+      byteSize: blob.byteLength,
+      sha256: blob.checksum,
+      safeObjectKey: blob.safeObjectKey,
+    });
+
+    return { artifact: savedArtifact, blob };
+  }
+
   async registerArtifact(input: RegisterArtifactInput, actorUserId: string): Promise<RunArtifact> {
     assertNoSecrets(input, 'Artifact input');
     const membership = await this.getMembership(input.workspaceId, actorUserId);
@@ -687,6 +774,89 @@ export class ProductService {
     };
 
     return this.repos.artifacts.create(artifact);
+  }
+
+  async getArtifact(workspaceId: string, artifactId: string, actorUserId: string): Promise<RunArtifact> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canViewReports(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied to view artifacts in workspace "${workspaceId}".`);
+    }
+
+    const artifact = await this.repos.artifacts.findById(workspaceId, artifactId);
+    if (!artifact) {
+      throw new EntityNotFoundError(`Artifact "${artifactId}" not found in workspace "${workspaceId}".`);
+    }
+
+    return artifact;
+  }
+
+  async getArtifactContent(
+    workspaceId: string,
+    artifactId: string,
+    actorUserId: string,
+  ): Promise<{ artifact: RunArtifact; payload: BlobPayload }> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canViewReports(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied to view artifact content in workspace "${workspaceId}".`);
+    }
+
+    const artifact = await this.repos.artifacts.findById(workspaceId, artifactId);
+    if (!artifact) {
+      throw new EntityNotFoundError(`Artifact "${artifactId}" not found in workspace "${workspaceId}".`);
+    }
+
+    const run = await this.repos.runs.findById(workspaceId, artifact.runId);
+    if (!run) {
+      throw new EntityNotFoundError(`TestRun "${artifact.runId}" not found for artifact "${artifactId}".`);
+    }
+
+    const locator: BlobLocator = {
+      workspaceId,
+      projectId: run.projectId,
+      runId: artifact.runId,
+      artifactId: artifact.id,
+    };
+
+    const payload = await this.blobs.get(locator);
+    if (!payload) {
+      throw new EntityNotFoundError(`Artifact content missing from storage for artifact "${artifactId}".`);
+    }
+
+    return { artifact, payload };
+  }
+
+  async deleteArtifact(workspaceId: string, artifactId: string, actorUserId: string): Promise<boolean> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canManageWorkspace(membership, workspaceId) && !canRunProject(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied to delete artifacts in workspace "${workspaceId}".`);
+    }
+
+    const artifact = await this.repos.artifacts.findById(workspaceId, artifactId);
+    if (!artifact) {
+      throw new EntityNotFoundError(`Artifact "${artifactId}" not found in workspace "${workspaceId}".`);
+    }
+
+    const run = await this.repos.runs.findById(workspaceId, artifact.runId);
+    if (!run) {
+      throw new EntityNotFoundError(`TestRun "${artifact.runId}" not found for artifact "${artifactId}".`);
+    }
+
+    const locator: BlobLocator = {
+      workspaceId,
+      projectId: run.projectId,
+      runId: artifact.runId,
+      artifactId: artifact.id,
+    };
+
+    const deleted = await this.blobs.delete(locator);
+
+    await this.recordAudit(workspaceId, actorUserId, 'artifact.deleted', 'run_artifact', artifactId, {
+      runId: artifact.runId,
+      type: artifact.type,
+      deleted,
+    });
+
+    return deleted;
   }
 
   async listArtifacts(workspaceId: string, runId: string, actorUserId: string): Promise<readonly RunArtifact[]> {

@@ -190,13 +190,43 @@ List evidence artifacts linked to a test run.
           "workspaceId": "ws_acme01",
           "runId": "run_001",
           "type": "execution",
-          "storagePath": "reports/run_001/execution.json",
+          "storagePath": "workspace/ws_acme01/project/prj_shop01/run/run_001/artifact/art_exec01",
           "byteSize": 14205,
           "sha256": "3a7b...",
           "contentType": "application/json",
           "createdAt": "2026-10-12T00:00:00.000Z"
         }
       ]
-    }
+    },
+    "requestId": "req_..."
   }
   ```
+
+### 3.10 `POST /api/v1/runs/:runId/artifacts`
+Upload and store a physical artifact blob and persist its database metadata record.
+- **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
+- **Request Body:**
+  ```json
+  {
+    "workspaceId": "ws_acme01",
+    "type": "anomalies",
+    "content": { "anomalyCount": 0 },
+    "contentType": "application/json"
+  }
+  ```
+- **Response:** `201 Created` with stored artifact metadata and blob info.
+
+### 3.11 `GET /api/v1/artifacts/:artifactId?workspaceId=:workspaceId`
+Retrieve metadata for a specific artifact.
+- **Response:** `200 OK`
+
+### 3.12 `GET /api/v1/artifacts/:artifactId/content?workspaceId=:workspaceId`
+Download the raw artifact binary or text content.
+- **Headers Returned:**
+  - `Content-Type`: mime type of the artifact
+  - `Content-Length`: payload size in bytes
+  - `ETag`: `"<sha256>"`
+  - `X-Artifact-Type`: artifact type
+  - `X-Artifact-Sha256`: SHA-256 hash
+  - `X-Request-Id`: request tracing ID
+- **Response:** `200 OK` with raw body payload.

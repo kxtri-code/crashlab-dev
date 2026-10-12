@@ -2692,3 +2692,29 @@ npm run auth:check
 | **`0`** | Token generated or configuration verified successfully. |
 | **`1`** | Token generation or configuration failure. |
 | **`2`** | Invalid CLI syntax or missing required argument. |
+
+---
+
+## Build 12B.2A: Secure Artifact Blob Storage
+
+Build 12B.2A provides a provider-neutral physical blob storage layer for storing durable execution payloads (screenshots, traces, HAR files, reports, and JSON evidence) while maintaining strict tenant isolation, cryptographic immutability, and path traversal guards.
+
+- **Provider-Neutral `BlobStore` Interface:** Standard abstraction (`put`, `get`, `exists`, `delete`, `getMetadata`, `close`).
+- **Secure Local Filesystem Adapter (`LocalBlobStore`):**
+  - Confined strictly inside configured `PRODUCT_BLOB_ROOT`.
+  - Deterministic storage key layout: `workspace/<workspaceId>/project/<projectId>/run/<runId>/artifact/<artifactId>`.
+  - Rejects directory traversal tokens (`..`), slashes inside IDs, control characters, null bytes, and out-of-boundary symlinks.
+  - Atomic writes using temp files followed by rename.
+  - SHA-256 checksum and byte length verification.
+  - Immutability enforcement: prohibits conflicting overwrites; permits idempotent identical duplicate writes.
+- **Optional S3 Adapter (`S3CompatibleBlobStore`):** Zero-cloud-dependency S3 adapter contract verified with mock clients.
+- **Transactional Product Service Integration:**
+  - `storeArtifact`: Validates workspace membership, writes physical blob, inserts relational record into `run_artifacts`, and cleans up physical blob if database insert fails.
+  - `getArtifact` & `getArtifactContent`: Requires workspace membership and role authorization; prohibits cross-workspace access (HTTP 403).
+  - `deleteArtifact`: Safely purges physical blob and records `artifact.deleted` audit event.
+- **Tenant-Safe REST API Endpoints:**
+  - `POST /api/v1/runs/:runId/artifacts`: Authenticated artifact upload returning safe relative storage keys.
+  - `GET /api/v1/runs/:runId/artifacts`: List run artifacts scoped to workspace.
+  - `GET /api/v1/artifacts/:artifactId`: Retrieve artifact metadata.
+  - `GET /api/v1/artifacts/:artifactId/content`: Download raw artifact payload with `Content-Type`, `Content-Length`, `ETag`, `X-Artifact-Sha256`, and `X-Request-Id`.
+- **Zero Local Path Leaks:** Absolute server filesystem paths are never returned to clients or stored in the database.

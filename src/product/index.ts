@@ -27,4 +27,5 @@ export * from './service/rehearsal.js';
 export * from './api/types.js';
 export * from './api/routes.js';
 export * from './api/server.js';
+export * from './blob/index.js';
 export * from './util/id.js';
