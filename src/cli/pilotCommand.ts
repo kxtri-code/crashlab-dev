@@ -26,6 +26,8 @@ export const PILOT_FLAGS = [
   '-o',
   '--json',
   '--confirm-authorized',
+  '--pipeline',
+  '--baseline',
   '-h',
   '--help',
 ] as const;
@@ -49,6 +51,8 @@ Options:
   -o, --report <path>          Write JSON preflight report to file path
   --json                       Print preflight report as JSON to stdout
   --confirm-authorized         Confirm authorization for external non-local targets
+  --pipeline                   Run full post-execution pipeline (anomalies, reproduction, review)
+  --baseline <path>            Path to baseline file for candidate comparison
   -h, --help                   Show this message
 
 Exit codes:
@@ -66,6 +70,8 @@ export interface ParsedPilotArgs {
   reportPath?: string;
   json: boolean;
   confirmAuthorized: boolean;
+  pipeline: boolean;
+  baselinePath?: string;
   valid: boolean;
   error: string | null;
   unknown: string[];
@@ -78,6 +84,7 @@ export function parsePilotArgs(argv: readonly string[]): ParsedPilotArgs {
     preflightOnly: false,
     json: false,
     confirmAuthorized: false,
+    pipeline: false,
     valid: true,
     error: null,
     unknown: [...scan.flags.keys()].filter(
@@ -143,6 +150,17 @@ export function parsePilotArgs(argv: readonly string[]): ParsedPilotArgs {
 
   parsed.json = scan.flags.has('--json');
   parsed.confirmAuthorized = scan.flags.has('--confirm-authorized');
+  parsed.pipeline = scan.flags.has('--pipeline');
+
+  const baseline = flagValue(scan, ['--baseline']);
+  if (baseline.present) {
+    if (baseline.missingValue) {
+      parsed.error = 'Option --baseline requires a file path.';
+      parsed.valid = false;
+      return parsed;
+    }
+    parsed.baselinePath = baseline.value ?? undefined;
+  }
 
   return parsed;
 }
@@ -164,12 +182,16 @@ export async function runPilotCommand(argv: readonly string[]): Promise<number> 
     reportDir: args.reportDir,
     preflightReportPath: args.reportPath,
     confirmAuthorized: args.confirmAuthorized,
+    pipeline: args.pipeline,
+    baselinePath: args.baselinePath,
     quiet: args.json,
   });
 
   if (args.json) {
     console.log(JSON.stringify(result.preflightReport, null, 2));
-  } else if (result.message && !result.executed) {
+  } else if (result.executed) {
+    console.log(result.message);
+  } else if (result.message) {
     if (result.exitCode !== 0) {
       console.error(result.message);
     }

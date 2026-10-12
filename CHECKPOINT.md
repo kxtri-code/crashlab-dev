@@ -490,3 +490,43 @@ npm run pilot -- --config <path> --journey <path>
 - **Exit Code 0:** Valid preflight (`status: ready`) or successful local synthetic run.
 - **Exit Code 1:** Blocked or invalid safety configuration (`status: blocked` or `invalid`).
 - **Exit Code 2:** CLI syntax error, missing argument, or unreadable file.
+
+---
+
+## Build 10.4 Checkpoint: Verify Controlled Local Pilot Pipeline
+
+A verified, hardened snapshot verifying the complete CrashLab pipeline through the new pilot runner (`runPilot` / `npm run pilot`) using exclusively a local synthetic fixture.
+
+- **Checkpoint tag:** `build10.4-pilot-pipeline`
+- **Scope:** Complete pipeline execution orchestration (`--pipeline`), baseline candidate comparison (`--baseline`), artifact emission audit (`execution.json`, `anomalies.json`, `reproduction.json`, `candidates.json`), immutability verification, and human review triage.
+- **Safety Status:** **Staging pilot remains strictly BLOCKED.** Zero external browser executions, zero outbound network calls, and zero external credentials were used.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| --- | --- |
+| Full unit test suite (`npm run test:unit`) | **1,147 passed** (39 files) |
+| Browser test suite (`npm run test:browser`) | **172 passed** (11 files) |
+| Build 10.4 unit tests (`build104PilotPipeline.test.ts`) | **20 passed** |
+| Build 10.4 browser tests (`build104PilotPipeline.browser.test.ts`) | **5 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| `git diff --check` | clean (exit 0) |
+| Local fixture interface | Strictly loopback (`127.0.0.1` ephemeral port) |
+| External network calls | **0** |
+| Blocked configuration browser launches | **0** (strictly enforced) |
+| Reports & plans immutability | Byte-identical before and after evaluation |
+| Safe test mode & payment guard | Preserved across all executions & reproductions |
+| Candidate classification invariant | `confirmed: false`, `confirmedBug: false` strictly preserved |
+| Cloud / database / AI integrations | **0** |
+
+### Verified Flows
+
+1. **Successful Pipeline Run:**
+   - Preflight passes (`ready`) → browser launches → safe journey executes on loopback fixture → `execution.json`, `anomalies.json`, `reproduction.json`, and `candidates.json` generated in isolated directory.
+2. **Controlled HTTP 500 Anomaly:**
+   - Fixture endpoint `/boom` returns 500 → observed in execution → classified under `HTTP_5XX` → bounded reproducer runs 3 attempts (`reproduced: 3/3`, `confirmedBug: false`) → candidate report generated → reviewer triages via `review-state` command (`investigating` → `accepted`).
+3. **Clean Baseline Flow:**
+   - Healthy route run produces clean baseline with 0 anomalies → verified in isolated directory.
+4. **Refusal & Safety Gate:**
+   - Unapproved/staging/production-like configurations rejected at preflight with 0 browser launches, 0 network requests, and 0 evidence reports created.

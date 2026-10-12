@@ -16,6 +16,9 @@ import type {
   SafetyGateStatus,
 } from '../preflight/types.js';
 import type { ExecutionReport } from '../executor/types.js';
+import type { AnomalyReport } from '../anomaly/report.js';
+import type { ReproductionReport } from '../reproducer/types.js';
+import type { CandidateReport } from '../review/types.js';
 
 /** Strongly typed, immutable plan created only when preflight validation status is 'ready'. */
 export interface PilotExecutionPlan {
@@ -78,6 +81,10 @@ export interface PilotRunnerOptions {
   readonly confirmAuthorized?: boolean;
   /** If true, suppresses human-readable terminal output. */
   readonly quiet?: boolean;
+  /** If true, runs downstream anomaly, reproduction, and candidate review pipeline. */
+  readonly pipeline?: boolean;
+  /** Optional path to a baseline file for candidate comparison during pipeline execution. */
+  readonly baselinePath?: string;
 }
 
 /** Result emitted by the pilot runner. */
@@ -98,4 +105,12 @@ export interface PilotRunResult {
   readonly message: string;
   /** Execution report if execution was performed. */
   readonly executionReport?: ExecutionReport;
+  /** Anomaly report if pipeline was executed. */
+  readonly anomalyReport?: AnomalyReport;
+  /** Reproduction report if reproduction was performed. */
+  readonly reproductionReport?: ReproductionReport;
+  /** Candidate report if candidate review was performed. */
+  readonly candidateReport?: CandidateReport;
+  /** File paths of written artifacts when reportDir or report paths are specified. */
+  readonly artifactPaths?: Readonly<Record<string, string>>;
 }

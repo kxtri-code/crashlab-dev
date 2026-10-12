@@ -2520,3 +2520,103 @@ npm run pilot -- --help
 3. **Staging Remains Blocked:** Testing external staging targets requires explicit written authorization and is blocked from browser execution in this build. Local synthetic execution is permitted only against local loopback fixtures (`127.0.0.1`).
 4. **Production Strictly Prohibited:** Production hostnames are rejected at preflight and can never reach browser execution.
 5. **No Secrets Handled:** Credentials and test data must remain in protected local storage (`test-data.local.json` or environment variables) and are never printed in refusal messages or committed to Git.
+
+---
+
+## Build 10.4: Controlled Local Pilot Pipeline & Evidence Audit
+
+Build 10.4 runs and verifies the complete CrashLab pipeline through the pilot runner (`npm run pilot` / `runPilot`) using exclusively a deterministic local synthetic loopback fixture (`127.0.0.1`). It proves that the runner generates complete, verifiable evidence artifacts when preflight passes, and triggers zero browser instances or artifact emissions when preflight fails.
+
+### Purpose & Scope
+
+- **Integration Goal:** Validate the end-to-end chain: `Config → Preflight Gate → Browser Launch → Journey Execution → Anomaly Classification → Bounded Reproduction → Candidate Review → Review State Triage`.
+- **Target Constraint:** Loopback only (`127.0.0.1` / `localhost` on dynamic ephemeral ports).
+- **Safety Status:** **The real staging pilot remains strictly blocked.** Zero external websites, staging URLs, or production domains were contacted.
+
+### Local Synthetic Fixture Setup
+
+The local test fixture (`tests/fixtures/server.ts` / `tests/validation/pipelineFixtures.ts`) binds strictly to loopback (`127.0.0.1` on ephemeral port 0) and implements:
+1. **Healthy Catalog / Journey Route (`/shop`):** 200 OK, accessible DOM controls, safe interactive buttons.
+2. **Safe Interactive Controls (`/items/1`, `/button`):** Safe navigation and clicks without side effects.
+3. **Controlled Anomaly Route (`/boom`):** Deterministic HTTP 500 internal server error response.
+4. **Controlled Console Error Route (`/console-error`):** Deterministic uncaught runtime error signal.
+5. **Clean Baseline Route:** Free of unexpected network or console errors.
+6. **No Dangerous Endpoints:** Strictly zero payment processing, checkout, email, SMS, account deletion, external APIs, or persistence layers.
+
+### Successful Pipeline Flow
+
+```text
+Local Fixture Server (127.0.0.1)
+       ↓
+Pilot Config Validation (validatePilotConfiguration)
+       ↓
+Execution Gate Clearance (assertPilotReady: status: "ready")
+       ↓
+Browser Launched (Chromium headless, Playwright)
+       ↓
+Journey Executed (Safe-test mode enabled, payment guard active, no retries)
+       ↓
+Artifacts Emitted:
+  ├── execution.json    (Full journey execution record)
+  ├── anomalies.json    (Rule-based signal classifications)
+  ├── reproduction.json (Bounded 3x reproduction run)
+  └── candidates.json   (Candidate defects for human review)
+       ↓
+Human Review Triage (npm run review-state transitions)
+```
+
+### Controlled Anomaly Rehearsal Flow
+
+When targeting the synthetic `/boom` route:
+1. **Pilot Execution:** Journey navigates to `/boom`, capturing the HTTP 500 response in `execution.json`.
+2. **Anomaly Engine:** Build 4 rules evaluate raw evidence and classify the server error under rule `HTTP_5XX` in `anomalies.json`.
+3. **Bounded Reproduction:** Build 5 reproducer executes 3 bounded attempts across clean browser contexts (`reproduction.json`, result: `reproduced: 3/3`, `automaticRetries: false`).
+4. **Candidate Review:** Build 6/7 review engine generates candidate defects (`candidates.json`, invariant: `confirmedBug: false`, `confirmed: false`).
+5. **Review State Triage:** Build 8 event store records reviewer status changes (`open` → `investigating` → `accepted`) with immutable audit logging.
+
+### Blocked Configuration Behavior
+
+When an unapproved, misconfigured, or production-like configuration is supplied:
+1. Preflight validation returns `status: "blocked"` or `"invalid"`.
+2. The execution gate refuses to proceed (`PilotExecutionGateError`).
+3. **Zero browser instances are launched** (verified via mock spies and runtime assertions).
+4. **Zero network requests occur.**
+5. **Zero execution or evidence reports are created.**
+6. Input journey files remain byte-identical.
+7. Process exits with code `1`. Refusal diagnostics contain no credentials or secrets.
+
+### CLI Commands
+
+```bash
+# Display pilot CLI options and usage
+npm run pilot -- --help
+
+# Safe preflight-only dry run (guarantees 0 browser launches)
+npm run pilot -- --config path/to/local-config.json --preflight-only
+
+# Execute local journey through the pilot runner
+npm run pilot -- --config path/to/local-config.json --journey path/to/journey.json --report-dir path/to/reports
+
+# Execute full pipeline (execution + anomalies + reproduction + candidate review)
+npm run pilot -- --config path/to/local-config.json --journey path/to/journey.json --pipeline --report-dir path/to/reports
+
+# Check execution gate clearance
+npm run pilot-preflight -- --config path/to/local-config.json
+```
+
+### Exit Codes
+
+| Exit Code | Meaning |
+| --- | --- |
+| **`0`** | Successful local synthetic run or valid preflight-only result (`status: ready`). |
+| **`1`** | Blocked or invalid safety configuration (`status: blocked` or `invalid`). |
+| **`2`** | CLI syntax error, unreadable file, or invalid arguments. |
+
+### Evidence Limitations & Invariants
+
+1. **Synthetic Evidence vs Real Evidence:** Synthetic evidence demonstrates solely that the CrashLab harness functions correctly under controlled local conditions. It does not evaluate application business logic or prove software defect-freedom.
+2. **Reproduced Anomaly is Not a Confirmed Bug:** A reproduced synthetic signal (`reproduced: 3/3`) is a candidate for human review, not a confirmed bug (`confirmedBug: false` invariant).
+3. **Immutability of Plans and Reports:** Input journey files are never modified across execution or reproduction.
+4. **No External Network Access:** Zero outbound requests were made outside loopback.
+5. **No AI / Cloud / Database Dependencies:** The pipeline runs entirely self-contained without external services.
+6. **Staging Remains Blocked:** Real staging environments remain blocked until authorized testing procedures and credentials are confirmed by operators.

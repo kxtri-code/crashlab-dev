@@ -185,7 +185,20 @@ export async function runPilot(
     const report = await deps.journeyExecutor({
       journeyPath: options.journeyPath,
       safeTestMode: true,
+      evidenceDir: options.reportDir,
     });
+
+    const artifactPaths: Record<string, string> = {};
+    if (options.reportDir) {
+      const { join } = await import('node:path');
+      const { writeReport } = await import('../report/write.js');
+      const execPath = join(options.reportDir, 'execution.json');
+      const writeFn = deps.reportWriter
+        ? (rep: unknown, path: string) => deps.reportWriter!(rep, path)
+        : (rep: unknown, path: string) => writeReport(rep as object, path);
+      await writeFn(report, execPath);
+      artifactPaths.execution = execPath;
+    }
 
     return {
       exitCode: 0,
@@ -196,6 +209,7 @@ export async function runPilot(
       browserLaunchAttempts,
       message: `Pilot executed successfully against ${executionPlan.targetOrigin}.`,
       executionReport: report,
+      artifactPaths: Object.keys(artifactPaths).length > 0 ? artifactPaths : undefined,
     };
   }
 
@@ -206,12 +220,132 @@ export async function runPilot(
     const { loadJourneyPlan } = await import('../executor/planValidator.js');
     const plan = await loadJourneyPlan(options.journeyPath);
 
+    let testData: Record<string, string> | undefined;
+    if (executionPlan.testDataFile) {
+      const { loadTestData } = await import('../executor/testData.js');
+      testData = await loadTestData(executionPlan.testDataFile);
+    }
+
     const execReport = await executeJourney({
       plan,
       planPath: options.journeyPath,
+      testData,
       safeTestMode: true,
       evidenceDir: options.reportDir ?? 'evidence',
+      provenance: {
+        environmentId: executionPlan.targetEnvironment,
+        appBuildId: executionPlan.appBuildId ?? undefined,
+      },
     });
+
+    const artifactPaths: Record<string, string> = {};
+    if (options.reportDir) {
+      const { join } = await import('node:path');
+      const { writeReport } = await import('../report/write.js');
+      const execPath = join(options.reportDir, 'execution.json');
+      const writeFn = deps.reportWriter
+        ? (rep: unknown, path: string) => deps.reportWriter!(rep, path)
+        : (rep: unknown, path: string) => writeReport(rep as object, path);
+      await writeFn(execReport, execPath);
+      artifactPaths.execution = execPath;
+    }
+
+    let anomalyReport: any = undefined;
+    let reproductionReport: any = undefined;
+    let candidateReport: any = undefined;
+
+    if (options.pipeline) {
+      const { join } = await import('node:path');
+      const { writeReport } = await import('../report/write.js');
+      const execPath = options.reportDir
+        ? join(options.reportDir, 'execution.json')
+        : 'reports/execution.json';
+
+      // 1. Anomaly classification
+      const { buildAnomalyReport } = await import('../anomaly/report.js');
+      const anomReport = buildAnomalyReport({
+        execution: execReport,
+        journey: plan,
+        executionPath: execPath,
+        journeyPath: options.journeyPath,
+      });
+      anomalyReport = anomReport;
+
+      if (options.reportDir) {
+        const anomPath = join(options.reportDir, 'anomalies.json');
+        const writeFn = deps.reportWriter
+          ? (rep: unknown, path: string) => deps.reportWriter!(rep, path)
+          : (rep: unknown, path: string) => writeReport(rep as object, path);
+        await writeFn(anomReport, anomPath);
+        artifactPaths.anomalies = anomPath;
+      }
+
+      // 2. Controlled reproduction (bounded attempts)
+      const { hasEligibleSignals } = await import('../reproducer/eligibility.js');
+      if (hasEligibleSignals({ anomalies: anomReport, includePossiblyExpected: false })) {
+        const { reproduceSignals } = await import('../reproducer/reproducer.js');
+        const anomPath = options.reportDir
+          ? join(options.reportDir, 'anomalies.json')
+          : 'reports/anomalies.json';
+
+        const reproReport = await reproduceSignals({
+          anomalies: anomReport,
+          journey: plan,
+          attempts: 3,
+          authorized: true,
+          includePossiblyExpected: false,
+          anomalyPath: anomPath,
+          journeyPath: options.journeyPath,
+          executionPath: execPath,
+          outputDir: options.reportDir
+            ? join(options.reportDir, 'reproduction-attempts')
+            : 'reports/reproduction-attempts',
+        });
+        reproductionReport = reproReport;
+
+        if (options.reportDir) {
+          const reproPath = join(options.reportDir, 'reproduction.json');
+          const writeFn = deps.reportWriter
+            ? (rep: unknown, path: string) => deps.reportWriter!(rep, path)
+            : (rep: unknown, path: string) => writeReport(rep as object, path);
+          await writeFn(reproReport, reproPath);
+          artifactPaths.reproduction = reproPath;
+        }
+      }
+
+      // 3. Candidate review
+      const { buildCandidateReport } = await import('../review/candidateReport.js');
+      let baseline: any = null;
+      if (options.baselinePath) {
+        const { readBaseline } = await import('../baseline/writer.js');
+        baseline = await readBaseline(options.baselinePath);
+      }
+
+      const candReport = buildCandidateReport({
+        anomalies: anomReport,
+        execution: execReport,
+        journey: plan,
+        reproduction: reproductionReport ?? null,
+        baseline: baseline ?? null,
+        paths: {
+          execution: execPath,
+          anomalies: options.reportDir ? join(options.reportDir, 'anomalies.json') : 'reports/anomalies.json',
+          reproduction: reproductionReport && options.reportDir ? join(options.reportDir, 'reproduction.json') : null,
+          journey: options.journeyPath,
+          baseline: options.baselinePath ?? null,
+        },
+      });
+      candidateReport = candReport;
+
+      if (options.reportDir) {
+        const candPath = join(options.reportDir, 'candidates.json');
+        const writeFn = deps.reportWriter
+          ? (rep: unknown, path: string) => deps.reportWriter!(rep, path)
+          : (rep: unknown, path: string) => writeReport(rep as object, path);
+        await writeFn(candReport, candPath);
+        artifactPaths.candidates = candPath;
+      }
+    }
 
     return {
       exitCode: 0,
@@ -222,6 +356,22 @@ export async function runPilot(
       browserLaunchAttempts,
       message: `Pilot executed successfully against local synthetic fixture (${executionPlan.targetOrigin}).`,
       executionReport: execReport,
+      anomalyReport,
+      reproductionReport,
+      candidateReport,
+      artifactPaths: Object.keys(artifactPaths).length > 0 ? artifactPaths : undefined,
+    };
+  }
+
+  if (deps.browserLauncher) {
+    return {
+      exitCode: 0,
+      preflightResult,
+      preflightReport,
+      executionPlan,
+      executed: true,
+      browserLaunchAttempts,
+      message: `Pilot executed injected browser launcher against ${executionPlan.targetOrigin}.`,
     };
   }
 

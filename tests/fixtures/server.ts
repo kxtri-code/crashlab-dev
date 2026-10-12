@@ -30,6 +30,13 @@ function fixtureResponse(pathname: string): { status: number; type: string; body
   if (pathname === '/boom') {
     return { status: 500, type: 'text/plain; charset=utf-8', body: 'internal fixture error' };
   }
+  if (pathname === '/console-error') {
+    return {
+      status: 200,
+      type: 'text/html; charset=utf-8',
+      body: '<!doctype html><title>Console Error Fixture</title><h1>Console Error</h1><script>console.error("controlled synthetic console error");</script>',
+    };
+  }
   if (pathname === '/api/probe') {
     return { status: 200, type: 'application/json', body: '{"ok":true}' };
   }
