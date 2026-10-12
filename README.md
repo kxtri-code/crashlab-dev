@@ -42,6 +42,11 @@ This repository contains five builds, with two integration milestones layered on
 - **Build 10.3 — Enforce Preflight Gate Before Pilot Execution** (`npm run pilot`):
   orchestrates pilot execution through the mandatory preflight safety gate, guaranteeing
   zero browser launches and zero network activity whenever configuration is blocked or invalid.
+- **Build 10.4 — Controlled Local Pilot Pipeline Execution**: live browser verification of
+  the complete pilot pipeline through synthetic fixtures, confirming safe mode and artifact emission.
+- **Build 10.5 — Local Product Demo Package** (`npm run demo`): single-command, beginner-friendly
+  local demonstration running the complete CrashLab pipeline (healthy & controlled failure scenarios)
+  against synthetic loopback fixtures with zero external traffic, credentials, or payments.
 
 Each build is a separate artifact, and no build rewrites another's:
 

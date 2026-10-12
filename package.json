@@ -29,12 +29,13 @@
     "review-ui": "tsx src/cli.ts review-ui",
     "pilot-preflight": "tsx src/cli.ts pilot-preflight",
     "pilot": "tsx src/cli.ts pilot",
+    "demo": "tsx src/cli.ts demo",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:browser": "vitest run tests/browser",
+    "test:browser": "vitest run tests/browser --fileParallelism=false",
     "test:watch": "vitest"
   },
   "dependencies": {

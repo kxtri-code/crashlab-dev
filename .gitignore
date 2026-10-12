@@ -13,6 +13,15 @@ reports/reproduction/
 # one should not be committed by default. Track specific baselines explicitly.
 reports/baselines/
 
+# Build 10.4 pilot rehearsal artifacts
+reports/pilot/
+
+# Build 10.5 product demo artifacts
+reports/demo/
+
+# Review state event store
+reports/review-state/
+
 # Build 3 evidence: screenshots can show whatever was on the page.
 evidence/
 
