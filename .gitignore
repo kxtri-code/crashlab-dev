@@ -25,6 +25,9 @@ reports/review-state/
 # Build 3 evidence: screenshots can show whatever was on the page.
 evidence/
 
+# Build 12B.2A local artifact blob store
+.artifacts/
+
 # Local test data may hold real test credentials. Only the committed fake
 # fixture is tracked.
 test-data.local.json

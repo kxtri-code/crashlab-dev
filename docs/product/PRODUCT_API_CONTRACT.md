@@ -284,3 +284,42 @@ Download the raw artifact binary or text content.
   - `X-Artifact-Sha256`: SHA-256 hash
   - `X-Request-Id`: request tracing ID
 - **Response:** `200 OK` with raw body payload.
+
+---
+
+## 4. Build 12C.1 Dashboard Integration Endpoints
+
+### 4.1 `GET /api/v1/me`
+Retrieve currently authenticated user profile and identity.
+- **Auth:** `Authorization: Bearer <token>`
+- **Response:** `200 OK`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "user": {
+        "id": "usr_alice",
+        "email": "alice@portal.test",
+        "name": "Alice Operator"
+      }
+    },
+    "requestId": "req_..."
+  }
+  ```
+
+### 4.2 `GET /api/v1/workspaces/:workspaceId`
+Retrieve metadata for an authorized workspace.
+- **Response:** `200 OK`
+
+### 4.3 `GET /api/v1/targets?workspaceId=:workspaceId` & `GET /api/v1/projects/:projectId/targets?workspaceId=:workspaceId`
+List target environments configured for the workspace or project.
+- **Response:** `200 OK`
+
+### 4.4 `GET /api/v1/journeys?workspaceId=:workspaceId` & `GET /api/v1/targets/:targetId/journeys?workspaceId=:workspaceId`
+List approved preflight-gated journeys.
+- **Response:** `200 OK`
+
+### 4.5 `GET /api/v1/runs/:runId/candidates?workspaceId=:workspaceId` & `GET /api/v1/projects/:projectId/candidates?workspaceId=:workspaceId`
+List candidate defect leads associated with a run or project.
+- **Invariant:** All records returned have `confirmedBug: false` and are candidate signals for human review.
+- **Response:** `200 OK`

@@ -58,6 +58,8 @@ This repository contains five builds, with two integration milestones layered on
   provider-neutral BlobStore boundary with atomic local filesystem implementation, SHA-256 checksums, and tenant-safe artifact downloading.
 - **Build 12B.2B — PostgreSQL-Backed Asynchronous Run Queue & Worker Dispatcher** (`npm run worker`):
   atomic claiming with row locking (`FOR UPDATE SKIP LOCKED`), lease renewal heartbeats, mandatory preflight safety gate, bounded explicit retries, idempotent cancellation, and injectable execution worker.
+- **Build 12C.1 — Authenticated CrashLab Product Dashboard** (`npm run dashboard`):
+  interactive single-page web client connecting to the Product API with in-memory local dev authentication, multi-tenant workspace/project navigation, real-time lifecycle & queue status, candidate triage with `confirmedBug: false` invariant, safe artifact previews/downloads, visibility-aware polling, and bounded idempotent cancellation.
 
 Each build is a separate artifact, and no build rewrites another's:
 

@@ -29,4 +29,5 @@ export * from './api/routes.js';
 export * from './api/server.js';
 export * from './blob/index.js';
 export * from './queue/index.js';
+export * from './dashboard/index.js';
 export * from './util/id.js';

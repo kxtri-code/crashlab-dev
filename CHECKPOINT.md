@@ -652,3 +652,31 @@ A verified snapshot implementing a safe asynchronous worker queue that accepts p
 | Request correlation | `X-Request-Id` preserved and returned across all queue entities and API responses |
 | Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
 | External network / AI / Billing | **0** |
+
+---
+
+## Build 12C.1 Checkpoint: Authenticated CrashLab Product Dashboard
+
+A verified snapshot implementing the first authenticated CrashLab product dashboard connecting to the Product API over local loopback HTTP. Allows an authenticated user to view their authorized workspace data, projects, targets, approved journeys, runs, worker queue leases, candidate defect findings, and evidence artifacts.
+
+- **Checkpoint tag:** `build12c1-dashboard`
+- **Scope:** Single-page dashboard web client (`src/product/dashboard/`), typed API client (`ProductApiClient`), local loopback HTTP server with static asset hosting and API proxy (`createDashboardServer`), in-memory development bearer token state, multi-tenant workspace/project navigation, lifecycle & queue state monitor, candidate triage view with permanent `confirmedBug: false` invariant, safe artifact metadata and content previews (JSON, text, images, downloads with zero filesystem paths leaked), visibility-aware bounded queue polling, idempotent run cancellation confirmation modal, CLI command (`npm run dashboard`), and comprehensive unit & Playwright browser integration tests.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,349 passed** (47 files) |
+| Browser test suite (`npm run test:browser`) | **187 passed** (13 files) |
+| Build 12C.1 unit tests (`build12c1Dashboard.test.ts`) | **20 passed** |
+| Build 12C.1 browser tests (`dashboard.browser.test.ts`) | **11 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| CLI dashboard (`npm run dashboard -- --help`) | exit 0 |
+| Token secrecy | Zero tokens in HTML, logs, or disk persistence |
+| Direct Supabase / DB access from browser | **0** (strictly loopback API client) |
+| Target traffic from browser | **0** (worker queue boundary only) |
+| Existing Review UI | Untouched and functional (`src/reviewUi/`) |
+| Invariant preservation | `confirmedBug: false` permanently displayed on candidate findings |
+| External network / AI / Billing | **0** |

@@ -981,6 +981,14 @@ export class ProductService {
     return this.repos.candidates.listByProject(workspaceId, projectId);
   }
 
+  async listCandidatesByRun(workspaceId: string, runId: string, actorUserId: string): Promise<readonly CandidateReference[]> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canViewReports(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied to view candidate reports in workspace "${workspaceId}".`);
+    }
+    return this.repos.candidates.listByRun(workspaceId, runId);
+  }
+
   // --- Run Artifacts ---------------------------------------------------------
 
   /**

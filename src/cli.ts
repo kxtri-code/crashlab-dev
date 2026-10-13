@@ -37,6 +37,7 @@ import { DB_MIGRATE_USAGE, runDbMigrateCommand } from './cli/dbMigrateCommand.js
 import { runAuthTokenCommand } from './cli/authTokenCommand.js';
 import { runAuthCheckCommand } from './cli/authCheckCommand.js';
 import { WORKER_USAGE, runWorkerCommand } from './cli/workerCommand.js';
+import { DASHBOARD_USAGE, runDashboardCommand } from './cli/dashboardCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -80,6 +81,7 @@ Usage:
   npm run auth:token -- --user <userId>
   npm run auth:check
   npm run worker [options]
+  npm run dashboard [options]
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -100,6 +102,7 @@ Commands:
   auth:token     Generate a signed development bearer token (Build 12B.1)
   auth:check     Verify authentication mode and storage configuration (Build 12B.1)
   worker         Run asynchronous background queue worker (Build 12B.2B)
+  dashboard      Start local authenticated Product Dashboard (Build 12C.1)
   help           Show this message
   version        Print the build version
 
@@ -467,6 +470,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runWorkerCommand(rest);
+  }
+
+  if (first === 'dashboard') {
+    if (wantsHelp(rest)) {
+      console.log(DASHBOARD_USAGE);
+      return 0;
+    }
+    return runDashboardCommand(rest);
   }
 
   return main([...argv]);

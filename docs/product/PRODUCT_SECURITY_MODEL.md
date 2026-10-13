@@ -125,3 +125,34 @@ Every state change or administrative action generates an immutable `AuditEvent`:
 - Event Types: `workspace.created`, `workspace.member_added`, `project.created`, `target.configured`, `journey.approved`, `run.requested`, `run.preflight_passed`, `run.preflight_blocked`, `run.started`, `run.completed`, `run.transitioned`, `candidate.reviewed`.
 - Audit records include: `id`, `workspaceId`, `actorUserId`, `eventType`, `entityType`, `entityId`, `metadata`, `timestamp`.
 - Prohibitions: Raw request bodies, cookies, authentication tokens, and full page contents are excluded from audit metadata.
+
+---
+
+## 6. Dashboard Security Model (Build 12C.1)
+
+### 6.1 Frontend Architectural Boundaries
+- **Zero Direct Database / Supabase Access:** The dashboard browser application connects solely to the Product API through an authenticated loopback HTTP interface. Database credentials (`DATABASE_URL`), service keys, and internal secrets never exist in client code or browser memory.
+- **Zero In-Browser Browser Launches:** The dashboard client cannot trigger headless browser execution directly on the client machine; all execution flows through the preflight-gated worker queue.
+
+### 6.2 Token Security & Local Beta Authentication
+- **In-Memory Token Storage:** Tokens are retained strictly in memory during an active session and cleared completely on logout.
+- **Zero Token Leakage:** Bearer tokens are never rendered in HTML tags, never displayed in text elements, and never logged in console output.
+- **Explicit Development Boundary:** The login screen clearly warns: *"Local development authentication — not production login."*
+
+### 6.3 Browser Hardening & CSP
+- Strict Content Security Policy:
+  - `default-src 'self'`
+  - `script-src 'self'`
+  - `style-src 'self' 'unsafe-inline'`
+  - `img-src 'self' data: blob:`
+  - `connect-src 'self' http://127.0.0.1:* http://localhost:* ws:`
+  - `object-src 'none'`
+  - `frame-src 'none'`
+  - `base-uri 'self'`
+- Anti-sniffing (`X-Content-Type-Options: nosniff`) and no-cache policies (`Cache-Control: no-store`) enforced on all responses.
+- Path traversal protection on all static and reverse-proxy routes.
+
+### 6.4 Artifact Access Controls
+- Artifact files (screenshots, traces, logs) require authenticated API requests with verified workspace membership.
+- Server filesystem storage paths (`storagePath`) are redacted or sanitized; no physical operating system paths are exposed to the client.
+- Downloaded artifacts cannot execute inside the application origin.

@@ -153,6 +153,22 @@ export async function handleProductApiRequest(
   let targetedWorkspaceId: string | undefined;
 
   try {
+    // 2.5 Current authenticated user endpoint: GET /api/v1/me
+    if (pathname === '/api/v1/me' && method === 'GET') {
+      const user = await context.service.getUser(actorUserId);
+      const safeUser = user ?? {
+        id: actorUserId,
+        schemaVersion: '1.0',
+        name: actorUserId,
+        email: `${actorUserId}@crashlab.local`,
+        status: 'active' as const,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      sendJson(res, 200, { success: true, data: { user: safeUser }, requestId }, requestId);
+      return;
+    }
+
     // 3. Workspaces endpoints
     if (pathname === '/api/v1/workspaces') {
       if (method === 'GET') {
@@ -174,6 +190,16 @@ export async function handleProductApiRequest(
         sendJson(res, 201, { success: true, data: result.workspace, requestId }, requestId);
         return;
       }
+    }
+
+    // Workspace detail endpoint: /api/v1/workspaces/:workspaceId
+    const workspaceDetailMatch = pathname.match(/^\/api\/v1\/workspaces\/([^/]+)$/);
+    if (workspaceDetailMatch && method === 'GET') {
+      const workspaceId = workspaceDetailMatch[1]!;
+      targetedWorkspaceId = workspaceId;
+      const workspace = await context.service.getWorkspace(workspaceId, actorUserId);
+      sendJson(res, 200, { success: true, data: { workspace }, requestId }, requestId);
+      return;
     }
 
     // 4. Projects endpoints
@@ -221,6 +247,74 @@ export async function handleProductApiRequest(
       targetedWorkspaceId = workspaceId;
       const project = await context.service.getProject(workspaceId, projectId, actorUserId);
       sendJson(res, 200, { success: true, data: project, requestId }, requestId);
+      return;
+    }
+
+    // Project targets endpoint: /api/v1/projects/:projectId/targets or /api/v1/targets
+    const projectTargetsMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)\/targets$/);
+    if ((pathname === '/api/v1/targets' || projectTargetsMatch) && method === 'GET') {
+      const workspaceId = searchParams.get('workspaceId');
+      const projectId = projectTargetsMatch ? projectTargetsMatch[1]! : searchParams.get('projectId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      if (!projectId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "projectId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const targets = await context.service.listTargets(workspaceId, projectId, actorUserId);
+      sendJson(res, 200, { success: true, data: { targets }, requestId }, requestId);
+      return;
+    }
+
+    // Target journeys endpoint: /api/v1/targets/:targetId/journeys or /api/v1/journeys
+    const targetJourneysMatch = pathname.match(/^\/api\/v1\/targets\/([^/]+)\/journeys$/);
+    if ((pathname === '/api/v1/journeys' || targetJourneysMatch) && method === 'GET') {
+      const workspaceId = searchParams.get('workspaceId');
+      const targetId = targetJourneysMatch ? targetJourneysMatch[1]! : searchParams.get('targetId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      if (!targetId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "targetId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const journeys = await context.service.listJourneys(workspaceId, targetId, actorUserId);
+      sendJson(res, 200, { success: true, data: { journeys }, requestId }, requestId);
+      return;
+    }
+
+    // Project candidates endpoint: /api/v1/projects/:projectId/candidates
+    const projectCandidatesMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)\/candidates$/);
+    if (projectCandidatesMatch && method === 'GET') {
+      const projectId = projectCandidatesMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const candidates = await context.service.listCandidates(workspaceId, projectId, actorUserId);
+      sendJson(res, 200, { success: true, data: { candidates }, requestId }, requestId);
+      return;
+    }
+
+    // Run candidates endpoint: /api/v1/runs/:runId/candidates
+    const runCandidatesMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/candidates$/);
+    if (runCandidatesMatch && method === 'GET') {
+      const runId = runCandidatesMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const candidates = await context.service.listCandidatesByRun(workspaceId, runId, actorUserId);
+      sendJson(res, 200, { success: true, data: { candidates }, requestId }, requestId);
       return;
     }
 
@@ -449,6 +543,10 @@ export async function handleProductApiRequest(
         'x-artifact-sha256': artifact.sha256,
         'x-request-id': requestId,
         'cache-control': 'private, no-transform',
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization',
+        'access-control-expose-headers': 'Content-Type, Content-Length, ETag, X-Request-Id, X-Artifact-Sha256, X-Artifact-Type',
       });
       res.end(payload.content);
       return;
