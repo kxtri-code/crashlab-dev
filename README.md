@@ -52,6 +52,12 @@ This repository contains five builds, with two integration milestones layered on
 - **Build 12A — PostgreSQL / Supabase Persistence Adapter** (`npm run db:check`, `npm run db:migrate`):
   production-ready PostgreSQL repository implementation with parameterized SQL, transactional schema migrations,
   connection pooling, and multi-tenant query isolation.
+- **Build 12B.1 — Real Authentication & Database-Backed Product API** (`npm run auth:token`, `npm run auth:check`):
+  HMAC-SHA256 bearer token authentication, request ID tracing, tenant authorization middleware, and PostgreSQL dependency injection.
+- **Build 12B.2A — Secure Artifact Blob Storage**:
+  provider-neutral BlobStore boundary with atomic local filesystem implementation, SHA-256 checksums, and tenant-safe artifact downloading.
+- **Build 12B.2B — PostgreSQL-Backed Asynchronous Run Queue & Worker Dispatcher** (`npm run worker`):
+  atomic claiming with row locking (`FOR UPDATE SKIP LOCKED`), lease renewal heartbeats, mandatory preflight safety gate, bounded explicit retries, idempotent cancellation, and injectable execution worker.
 
 Each build is a separate artifact, and no build rewrites another's:
 

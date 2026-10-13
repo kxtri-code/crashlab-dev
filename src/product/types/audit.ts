@@ -23,7 +23,12 @@ export type AuditEventType =
   | 'auth.success'
   | 'auth.failed'
   | 'artifact.stored'
-  | 'artifact.deleted';
+  | 'artifact.deleted'
+  | 'run.queued'
+  | 'run.claimed'
+  | 'run.cancelled'
+  | 'run.retried'
+  | 'run.failed';
 
 export interface AuditEvent {
   readonly id: string;

@@ -36,6 +36,7 @@ import { DB_CHECK_USAGE, runDbCheckCommand } from './cli/dbCheckCommand.js';
 import { DB_MIGRATE_USAGE, runDbMigrateCommand } from './cli/dbMigrateCommand.js';
 import { runAuthTokenCommand } from './cli/authTokenCommand.js';
 import { runAuthCheckCommand } from './cli/authCheckCommand.js';
+import { WORKER_USAGE, runWorkerCommand } from './cli/workerCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -78,6 +79,7 @@ Usage:
   npm run db:migrate
   npm run auth:token -- --user <userId>
   npm run auth:check
+  npm run worker [options]
 
 Commands:
   scout <url>    Map an authorized page and write a JSON report (Build 1)
@@ -97,6 +99,7 @@ Commands:
   db:migrate     Run schema migrations against PostgreSQL/Supabase (Build 12A)
   auth:token     Generate a signed development bearer token (Build 12B.1)
   auth:check     Verify authentication mode and storage configuration (Build 12B.1)
+  worker         Run asynchronous background queue worker (Build 12B.2B)
   help           Show this message
   version        Print the build version
 
@@ -456,6 +459,14 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
 
   if (first === 'auth:check') {
     return runAuthCheckCommand(rest);
+  }
+
+  if (first === 'worker') {
+    if (wantsHelp(rest)) {
+      console.log(WORKER_USAGE);
+      return 0;
+    }
+    return runWorkerCommand(rest);
   }
 
   return main([...argv]);

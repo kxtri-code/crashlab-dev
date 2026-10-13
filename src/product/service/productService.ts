@@ -21,6 +21,9 @@ import type { AuditEvent } from '../types/audit.js';
 import type { ProductRepositories } from '../repository/interfaces.js';
 import type { BlobStore, BlobLocator, BlobMetadata, BlobPayload } from '../blob/interfaces.js';
 import { resolveBlobStore } from '../blob/config.js';
+import type { RunQueueRepository } from '../queue/repository.js';
+import { InMemoryRunQueueRepository } from '../queue/repository.js';
+import type { RunQueueItem } from '../queue/types.js';
 import type { IdGenerator } from '../util/id.js';
 import { defaultIdGenerator } from '../util/id.js';
 import {
@@ -61,6 +64,7 @@ export class PreflightRefusedError extends Error {
 
 export interface ProductServiceDependencies {
   readonly repositories: ProductRepositories;
+  readonly runQueue?: RunQueueRepository;
   readonly blobStore?: BlobStore;
   readonly idGenerator?: IdGenerator;
   readonly now?: () => Date;
@@ -68,12 +72,14 @@ export interface ProductServiceDependencies {
 
 export class ProductService {
   private readonly repos: ProductRepositories;
+  private readonly queue: RunQueueRepository;
   private readonly blobs: BlobStore;
   private readonly ids: IdGenerator;
   private readonly clock: () => Date;
 
   constructor(deps: ProductServiceDependencies) {
     this.repos = deps.repositories;
+    this.queue = deps.runQueue ?? deps.repositories.queue ?? new InMemoryRunQueueRepository();
     this.blobs = deps.blobStore ?? resolveBlobStore();
     this.ids = deps.idGenerator ?? defaultIdGenerator;
     this.clock = deps.now ?? (() => new Date());
@@ -81,6 +87,10 @@ export class ProductService {
 
   get blobStore(): BlobStore {
     return this.blobs;
+  }
+
+  get runQueue(): RunQueueRepository {
+    return this.queue;
   }
 
   private timestamp(): string {
@@ -464,6 +474,305 @@ export class ProductService {
     });
 
     return created;
+  }
+
+  /**
+   * Enqueues a product TestRun for asynchronous worker claiming and execution.
+   * Creates a queued TestRun and persists an atomic RunQueueItem.
+   */
+  async enqueueRun(
+    input: CreateTestRunInput,
+    actorUserId: string,
+  ): Promise<{ run: TestRun; queueItem: RunQueueItem }> {
+    assertNoSecrets(input, 'CreateTestRunInput');
+    const membership = await this.getMembership(input.workspaceId, actorUserId);
+    if (!canRunProject(membership, { workspaceId: input.workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied: Actor cannot trigger runs in workspace "${input.workspaceId}".`);
+    }
+
+    const target = await this.repos.targets.findById(input.workspaceId, input.targetEnvironmentId);
+    if (!target) {
+      throw new EntityNotFoundError(`Target "${input.targetEnvironmentId}" not found in workspace "${input.workspaceId}".`);
+    }
+
+    const journey = await this.repos.journeys.findById(input.workspaceId, input.journeyId);
+    if (!journey) {
+      throw new EntityNotFoundError(`Journey "${input.journeyId}" not found in workspace "${input.workspaceId}".`);
+    }
+
+    const ts = this.timestamp();
+    const runId = this.ids.generateId('run');
+    const maxAttempts = input.maxAttempts !== undefined && input.maxAttempts > 0 ? input.maxAttempts : 1;
+
+    const run: TestRun = {
+      id: runId,
+      schemaVersion: '1.0',
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      targetEnvironmentId: input.targetEnvironmentId,
+      journeyId: input.journeyId,
+      status: 'queued',
+      safeTestMode: true,
+      preflightStatus: 'pending',
+      attemptCount: 1,
+      maxAttempts,
+      availableAt: ts,
+      requestId: input.requestId,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+
+    const queueItem: RunQueueItem = {
+      runId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      targetId: input.targetEnvironmentId,
+      journeyId: input.journeyId,
+      queueStatus: 'queued',
+      attemptCount: 1,
+      maxAttempts,
+      availableAt: ts,
+      leaseOwner: null,
+      leaseExpiry: null,
+      startedAt: null,
+      completedAt: null,
+      lastError: null,
+      cancellationTimestamp: null,
+      requestId: input.requestId ?? null,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+
+    const createdRun = await this.repos.runs.create(run);
+    const createdQueueItem = await this.queue.enqueue(queueItem);
+
+    await this.recordAudit(input.workspaceId, actorUserId, 'run.queued', 'test_run', createdRun.id, {
+      targetId: input.targetEnvironmentId,
+      journeyId: input.journeyId,
+      requestId: input.requestId,
+    });
+
+    return { run: createdRun, queueItem: createdQueueItem };
+  }
+
+  /**
+   * Idempotently cancels a queued or running TestRun.
+   */
+  async cancelRun(
+    workspaceId: string,
+    runId: string,
+    actorUserId: string,
+    reason?: string,
+  ): Promise<TestRun> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canRunProject(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied: Actor cannot cancel runs in workspace "${workspaceId}".`);
+    }
+
+    const run = await this.repos.runs.findById(workspaceId, runId);
+    if (!run) {
+      throw new EntityNotFoundError(`TestRun "${runId}" not found in workspace "${workspaceId}".`);
+    }
+
+    // Idempotent cancellation: if already cancelled, return cleanly
+    if (run.status === 'cancelled') {
+      return run;
+    }
+
+    // Immutable terminal states
+    if (run.status === 'completed' || run.status === 'partial' || run.status === 'blocked') {
+      throw new Error(`Cannot cancel run in terminal status "${run.status}". Terminal states are immutable.`);
+    }
+
+    const ts = this.timestamp();
+    const cancelReason = reason?.trim() || 'Run was cancelled.';
+
+    if (run.status === 'running') {
+      // Transition running -> cancelling
+      const updatedRun: TestRun = {
+        ...run,
+        status: 'cancelling',
+        cancelReason,
+        cancelledAt: ts,
+        updatedAt: ts,
+      };
+      const saved = await this.repos.runs.update(updatedRun);
+
+      const queueItem = await this.queue.findByRunId(workspaceId, runId);
+      if (queueItem) {
+        await this.queue.update({
+          ...queueItem,
+          queueStatus: 'cancelling',
+          cancellationTimestamp: ts,
+          updatedAt: ts,
+        });
+      }
+
+      await this.recordAudit(workspaceId, actorUserId, 'run.transitioned', 'test_run', runId, {
+        previousStatus: 'running',
+        newStatus: 'cancelling',
+        reason: cancelReason,
+      });
+
+      return saved;
+    }
+
+    // If 'cancelling', return existing (idempotent)
+    if (run.status === 'cancelling') {
+      return run;
+    }
+
+    // If 'queued' or 'created' or 'preflight'
+    const updatedRun: TestRun = {
+      ...run,
+      status: 'cancelled',
+      cancelReason,
+      cancelledAt: ts,
+      finishedAt: ts,
+      updatedAt: ts,
+    };
+    const saved = await this.repos.runs.update(updatedRun);
+
+    const queueItem = await this.queue.findByRunId(workspaceId, runId);
+    if (queueItem) {
+      await this.queue.update({
+        ...queueItem,
+        queueStatus: 'cancelled',
+        cancellationTimestamp: ts,
+        completedAt: ts,
+        updatedAt: ts,
+      });
+      if (queueItem.leaseOwner) {
+        await this.queue.releaseLease(runId, queueItem.leaseOwner);
+      }
+    }
+
+    await this.recordAudit(workspaceId, actorUserId, 'run.cancelled', 'test_run', runId, {
+      reason: cancelReason,
+    });
+
+    return saved;
+  }
+
+  /**
+   * Explicitly retries a failed TestRun if attempt limits allow.
+   * Safety-blocked or completed runs cannot be retried.
+   */
+  async retryRun(
+    workspaceId: string,
+    runId: string,
+    actorUserId: string,
+  ): Promise<{ run: TestRun; queueItem: RunQueueItem }> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canRunProject(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied: Actor cannot retry runs in workspace "${workspaceId}".`);
+    }
+
+    const run = await this.repos.runs.findById(workspaceId, runId);
+    if (!run) {
+      throw new EntityNotFoundError(`TestRun "${runId}" not found in workspace "${workspaceId}".`);
+    }
+
+    // Safety and terminal checks
+    if (run.status === 'blocked') {
+      throw new Error('Safety-blocked runs cannot be retried.');
+    }
+    if (run.status === 'cancelled') {
+      throw new Error('Cancelled runs cannot be retried.');
+    }
+    if (run.status === 'completed' || run.status === 'partial') {
+      throw new Error(`Cannot retry run with terminal status "${run.status}".`);
+    }
+    if (run.status !== 'failed') {
+      throw new Error(`Cannot retry run with status "${run.status}". Only failed runs can be retried.`);
+    }
+
+    const queueItem = await this.queue.findByRunId(workspaceId, runId);
+    const currentAttempts = queueItem?.attemptCount ?? run.attemptCount ?? 1;
+    const maxAttempts = queueItem?.maxAttempts ?? run.maxAttempts ?? 1;
+
+    if (currentAttempts >= maxAttempts) {
+      throw new Error(`Cannot retry run: maximum attempts (${maxAttempts}) reached.`);
+    }
+
+    const validation = validateRunTransition(run, 'queued', { explicitRetry: true });
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
+
+    const nextAttempt = currentAttempts + 1;
+    const ts = this.timestamp();
+
+    const updatedRun: TestRun = {
+      ...run,
+      status: 'queued',
+      attemptCount: nextAttempt,
+      maxAttempts,
+      lastError: run.failureReason,
+      failureReason: undefined,
+      updatedAt: ts,
+    };
+    const savedRun = await this.repos.runs.update(updatedRun);
+
+    let savedQueueItem: RunQueueItem;
+    if (queueItem) {
+      savedQueueItem = await this.queue.update({
+        ...queueItem,
+        queueStatus: 'queued',
+        attemptCount: nextAttempt,
+        maxAttempts,
+        availableAt: ts,
+        leaseOwner: null,
+        leaseExpiry: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: run.failureReason ?? queueItem.lastError,
+        updatedAt: ts,
+      });
+    } else {
+      savedQueueItem = await this.queue.enqueue({
+        runId: run.id,
+        workspaceId: run.workspaceId,
+        projectId: run.projectId,
+        targetId: run.targetEnvironmentId,
+        journeyId: run.journeyId,
+        queueStatus: 'queued',
+        attemptCount: nextAttempt,
+        maxAttempts,
+        availableAt: ts,
+        leaseOwner: null,
+        leaseExpiry: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: run.failureReason ?? null,
+        cancellationTimestamp: null,
+        requestId: run.requestId ?? null,
+        createdAt: run.createdAt,
+        updatedAt: ts,
+      });
+    }
+
+    await this.recordAudit(workspaceId, actorUserId, 'run.retried', 'test_run', runId, {
+      attemptCount: nextAttempt,
+      maxAttempts,
+    });
+
+    return { run: savedRun, queueItem: savedQueueItem };
+  }
+
+  /**
+   * Retrieves queue metadata for a run within a workspace.
+   */
+  async getRunQueueItem(
+    workspaceId: string,
+    runId: string,
+    actorUserId: string,
+  ): Promise<RunQueueItem | null> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canReadWorkspace(membership, workspaceId)) {
+      throw new TenantAccessDeniedError(`Access denied to workspace "${workspaceId}".`);
+    }
+    return this.queue.findByRunId(workspaceId, runId);
   }
 
   async getRun(workspaceId: string, runId: string, actorUserId: string): Promise<TestRun> {

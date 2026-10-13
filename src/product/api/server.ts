@@ -26,11 +26,14 @@ import type { BlobStoreConfig } from '../blob/config.js';
 import { resolveBlobStore } from '../blob/config.js';
 import type { IdGenerator } from '../util/id.js';
 
+import type { RunQueueRepository } from '../queue/repository.js';
+
 export interface ProductApiServerOptions {
   readonly host?: string;
   readonly port?: number;
   readonly service?: ProductService;
   readonly repositories?: ProductRepositories;
+  readonly runQueue?: RunQueueRepository;
   readonly storage?: ProductStorageType;
   readonly databaseUrl?: string;
   readonly pool?: PostgresPool;
@@ -80,6 +83,7 @@ export class ProductApiServer {
 
       this.service = new ProductService({
         repositories: resolved.repositories,
+        runQueue: options.runQueue,
         blobStore,
         idGenerator: options.idGenerator,
       });

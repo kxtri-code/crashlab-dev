@@ -172,11 +172,65 @@ List test runs for a project.
   }
   ```
 
-### 3.8 `GET /api/v1/runs/:runId?workspaceId=:workspaceId`
+### 3.8 `POST /api/v1/runs`
+Create and enqueue a new test run for asynchronous worker execution.
+- **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
+- **Request Body:**
+  ```json
+  {
+    "workspaceId": "ws_acme01",
+    "projectId": "prj_shop01",
+    "targetEnvironmentId": "tgt_staging01",
+    "journeyId": "jny_catalog01",
+    "maxAttempts": 2
+  }
+  ```
+- **Response:** `201 Created`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "run_001",
+      "status": "queued",
+      "attemptCount": 1,
+      "maxAttempts": 2,
+      "safeTestMode": true,
+      "preflightStatus": "pending"
+    },
+    "requestId": "req_..."
+  }
+  ```
+
+### 3.9 `GET /api/v1/runs/:runId?workspaceId=:workspaceId`
 Get single run details and lifecycle status.
 - **Response:** `200 OK`
 
-### 3.9 `GET /api/v1/runs/:runId/artifacts?workspaceId=:workspaceId`
+### 3.10 `POST /api/v1/runs/:runId/cancel`
+Idempotently cancels a queued or executing test run.
+- **Request Body:**
+  ```json
+  {
+    "workspaceId": "ws_acme01",
+    "reason": "Operator cancelled test"
+  }
+  ```
+- **Response:** `200 OK`
+
+### 3.11 `POST /api/v1/runs/:runId/retry`
+Explicitly retries a failed test run if attempts remain. Safety-blocked and completed runs cannot be retried.
+- **Request Body:**
+  ```json
+  {
+    "workspaceId": "ws_acme01"
+  }
+  ```
+- **Response:** `200 OK`
+
+### 3.12 `GET /api/v1/runs/:runId/queue?workspaceId=:workspaceId`
+Retrieve queue lease and scheduling metadata for a run.
+- **Response:** `200 OK`
+
+### 3.13 `GET /api/v1/runs/:runId/artifacts?workspaceId=:workspaceId`
 List evidence artifacts linked to a test run.
 - **Response:** `200 OK`
   ```json

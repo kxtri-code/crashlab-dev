@@ -239,6 +239,100 @@ export async function handleProductApiRequest(
       return;
     }
 
+    // Create/enqueue run endpoint: POST /api/v1/runs
+    if (pathname === '/api/v1/runs' && method === 'POST') {
+      const body = await parseBody<{
+        workspaceId?: string;
+        projectId?: string;
+        targetEnvironmentId?: string;
+        journeyId?: string;
+        maxAttempts?: number;
+      }>(req);
+
+      if (!body.workspaceId || !body.projectId || !body.targetEnvironmentId || !body.journeyId) {
+        sendError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'Missing required fields "workspaceId", "projectId", "targetEnvironmentId", and "journeyId".',
+          requestId,
+        );
+        return;
+      }
+
+      targetedWorkspaceId = body.workspaceId;
+      const result = await context.service.enqueueRun(
+        {
+          workspaceId: body.workspaceId,
+          projectId: body.projectId,
+          targetEnvironmentId: body.targetEnvironmentId,
+          journeyId: body.journeyId,
+          maxAttempts: body.maxAttempts,
+          requestId,
+        },
+        actorUserId,
+      );
+
+      sendJson(res, 201, { success: true, data: result.run, requestId }, requestId);
+      return;
+    }
+
+    // Cancel run endpoint: POST /api/v1/runs/:runId/cancel
+    const runCancelMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/);
+    if (runCancelMatch && method === 'POST') {
+      const runId = runCancelMatch[1]!;
+      const body = await parseBody<{ workspaceId?: string; reason?: string }>(req);
+      const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const cancelledRun = await context.service.cancelRun(
+        workspaceId,
+        runId,
+        actorUserId,
+        body.reason,
+      );
+      sendJson(res, 200, { success: true, data: cancelledRun, requestId }, requestId);
+      return;
+    }
+
+    // Explicit retry run endpoint: POST /api/v1/runs/:runId/retry
+    const runRetryMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/retry$/);
+    if (runRetryMatch && method === 'POST') {
+      const runId = runRetryMatch[1]!;
+      const body = await parseBody<{ workspaceId?: string }>(req);
+      const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const retried = await context.service.retryRun(workspaceId, runId, actorUserId);
+      sendJson(res, 200, { success: true, data: retried.run, requestId }, requestId);
+      return;
+    }
+
+    // Queue status detail endpoint: GET /api/v1/runs/:runId/queue
+    const runQueueMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/queue$/);
+    if (runQueueMatch && method === 'GET') {
+      const runId = runQueueMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const queueItem = await context.service.getRunQueueItem(workspaceId, runId, actorUserId);
+      if (!queueItem) {
+        sendError(res, 404, 'NOT_FOUND', `Queue item for run "${runId}" not found.`, requestId);
+        return;
+      }
+      sendJson(res, 200, { success: true, data: queueItem, requestId }, requestId);
+      return;
+    }
+
     // Run detail endpoint: /api/v1/runs/:runId
     const runDetailMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)$/);
     if (runDetailMatch && method === 'GET') {

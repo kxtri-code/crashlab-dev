@@ -88,6 +88,8 @@ export interface AuditRepository {
   create(event: AuditEvent): Promise<AuditEvent>;
 }
 
+import type { RunQueueRepository } from '../queue/repository.js';
+
 export interface ProductRepositories {
   readonly users: UserRepository;
   readonly workspaces: WorkspaceRepository;
@@ -99,4 +101,5 @@ export interface ProductRepositories {
   readonly artifacts: ArtifactRepository;
   readonly candidates: CandidateRepository;
   readonly audits: AuditRepository;
+  readonly queue?: RunQueueRepository;
 }

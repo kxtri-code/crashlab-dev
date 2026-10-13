@@ -12,6 +12,7 @@ export type RunStatus =
   | 'preflight'
   | 'queued'
   | 'running'
+  | 'cancelling'
   | 'completed'
   | 'partial'
   | 'failed'
@@ -23,6 +24,7 @@ export const RUN_STATUSES: readonly RunStatus[] = [
   'preflight',
   'queued',
   'running',
+  'cancelling',
   'completed',
   'partial',
   'failed',
@@ -50,6 +52,14 @@ export interface TestRun {
   readonly blockedReason?: string;
   readonly failureReason?: string;
   readonly cancelReason?: string;
+  readonly attemptCount?: number;
+  readonly maxAttempts?: number;
+  readonly availableAt?: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiry?: string;
+  readonly lastError?: string;
+  readonly cancelledAt?: string;
+  readonly requestId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly startedAt?: string;
@@ -61,4 +71,6 @@ export interface CreateTestRunInput {
   readonly projectId: string;
   readonly targetEnvironmentId: string;
   readonly journeyId: string;
+  readonly maxAttempts?: number;
+  readonly requestId?: string;
 }

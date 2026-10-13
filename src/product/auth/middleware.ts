@@ -45,7 +45,13 @@ export function authenticateRequest(
   req: IncomingMessage,
   options: AuthenticateRequestOptions,
 ): AuthResult {
-  const requestId = options.idGenerator?.generateId('req') ?? `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const clientReqId = req.headers['x-request-id'];
+  const requestId =
+    typeof clientReqId === 'string' &&
+    clientReqId.trim().length > 0 &&
+    /^[a-zA-Z0-9_\-\.]+$/.test(clientReqId.trim())
+      ? clientReqId.trim()
+      : options.idGenerator?.generateId('req') ?? `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const authHeader = req.headers['authorization'];
 
   // 1. Process explicit Authorization header if provided

@@ -34,6 +34,7 @@
     "db:migrate": "tsx src/cli.ts db:migrate",
     "auth:token": "tsx src/cli.ts auth:token",
     "auth:check": "tsx src/cli.ts auth:check",
+    "worker": "tsx src/cli.ts worker",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

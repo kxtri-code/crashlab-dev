@@ -44,6 +44,7 @@ export class MockPostgresPool implements PostgresPool {
     this.tables.set('run_artifacts', []);
     this.tables.set('candidate_references', []);
     this.tables.set('audit_events', []);
+    this.tables.set('run_queue', []);
     this.tables.set('_migrations', []);
     this.queryLog.length = 0;
     this.inTransaction = false;
@@ -213,7 +214,7 @@ export class MockPostgresPool implements PostgresPool {
     }
 
     // --- SELECT FROM <table> ---
-    const selectMatch = sql.match(/SELECT\s+(.+?)\s+FROM\s+([a-z_]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\$?\d+))?$/is);
+    const selectMatch = sql.match(/SELECT\s+(.+?)\s+FROM\s+([a-z_]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\$?\d+))?(?:\s+FOR\s+UPDATE.*)?$/is);
     if (selectMatch && selectMatch[2]) {
       const table = selectMatch[2].toLowerCase();
       const whereClause = selectMatch[3];
@@ -279,8 +280,15 @@ export class MockPostgresPool implements PostgresPool {
             const col = parts[0]?.toLowerCase();
             const pToken = parts[1];
             if (!col || !pToken) continue;
-            const paramIdx = parseInt(pToken.replace('$', ''), 10) - 1;
-            let val = params[paramIdx];
+            let val: any;
+            if (pToken.toUpperCase() === 'NULL') {
+              val = null;
+            } else if (pToken.startsWith('$')) {
+              const paramIdx = parseInt(pToken.replace('$', ''), 10) - 1;
+              val = params[paramIdx];
+            } else {
+              val = pToken.replace(/^['"]|['"]$/g, '');
+            }
             if (typeof val === 'string' && (col.endsWith('_origins') || col.endsWith('_actions') || col === 'metadata')) {
               try {
                 val = JSON.parse(val);
@@ -322,30 +330,130 @@ export class MockPostgresPool implements PostgresPool {
     return { rows: [] as R[], rowCount: 0 };
   }
 
-  private matchWhere(whereClause: string, row: Record<string, any>, params: readonly unknown[]): boolean {
-    const conditions = whereClause.split(/\s+AND\s+/i);
-    for (const cond of conditions) {
-      // Check: LOWER(email) = LOWER($1) or LOWER(col) = $1
-      const lowerMatch = cond.match(/LOWER\(([a-z_]+)\)\s*=\s*(?:LOWER\()?\$(\d+)\)?/i);
-      if (lowerMatch && lowerMatch[1] && lowerMatch[2]) {
-        const col = lowerMatch[1].toLowerCase();
-        const pIdx = parseInt(lowerMatch[2], 10) - 1;
-        const targetVal = String(params[pIdx] ?? '').toLowerCase();
-        const rowVal = String(row[col] ?? '').toLowerCase();
-        if (rowVal !== targetVal) return false;
-        continue;
+  private cleanOuterParens(str: string): string {
+    let s = str.trim();
+    while (s.startsWith('(') && s.endsWith(')')) {
+      let depth = 0;
+      let matched = true;
+      for (let i = 0; i < s.length - 1; i++) {
+        if (s[i] === '(') depth++;
+        else if (s[i] === ')') depth--;
+        if (depth === 0) {
+          matched = false;
+          break;
+        }
       }
-
-      // Check: col = $N
-      const eqMatch = cond.match(/([a-z_]+)\s*=\s*\$(\d+)/i);
-      if (eqMatch && eqMatch[1] && eqMatch[2]) {
-        const col = eqMatch[1].toLowerCase();
-        const pIdx = parseInt(eqMatch[2], 10) - 1;
-        const targetVal = params[pIdx];
-        if (row[col] !== targetVal) return false;
-        continue;
+      if (matched) {
+        s = s.slice(1, -1).trim();
+      } else {
+        break;
       }
     }
+    return s;
+  }
+
+  private splitByTopLevelOp(str: string, op: 'AND' | 'OR'): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let depth = 0;
+    const upper = str.toUpperCase();
+    const token = ` ${op} `;
+
+    let i = 0;
+    while (i < str.length) {
+      if (str[i] === '(') depth++;
+      else if (str[i] === ')') depth--;
+
+      if (depth === 0 && upper.startsWith(token, i)) {
+        parts.push(current.trim());
+        current = '';
+        i += token.length;
+        continue;
+      }
+      current += str[i];
+      i++;
+    }
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+    return parts;
+  }
+
+  private matchWhere(whereClause: string, row: Record<string, any>, params: readonly unknown[]): boolean {
+    const cleanedWhere = this.cleanOuterParens(whereClause);
+
+    // 1. Check top-level OR operations
+    const orParts = this.splitByTopLevelOp(cleanedWhere, 'OR');
+    if (orParts.length > 1) {
+      return orParts.some((part) => this.matchWhere(part.trim(), row, params));
+    }
+
+    // 2. Check top-level AND operations
+    const andParts = this.splitByTopLevelOp(cleanedWhere, 'AND');
+    if (andParts.length > 1) {
+      return andParts.every((part) => this.matchWhere(part.trim(), row, params));
+    }
+
+    const cleanCond = this.cleanOuterParens(cleanedWhere);
+
+    // Check: LOWER(email) = LOWER($1) or LOWER(col) = $1
+    const lowerMatch = cleanCond.match(/LOWER\(([a-z_]+)\)\s*=\s*(?:LOWER\()?\$(\d+)\)?/i);
+    if (lowerMatch && lowerMatch[1] && lowerMatch[2]) {
+      const col = lowerMatch[1].toLowerCase();
+      const pIdx = parseInt(lowerMatch[2], 10) - 1;
+      const targetVal = String(params[pIdx] ?? '').toLowerCase();
+      const rowVal = String(row[col] ?? '').toLowerCase();
+      return rowVal === targetVal;
+    }
+
+    // Check: col <= $N, col < $N, etc.
+    const cmpMatch = cleanCond.match(/([a-z_]+)\s*(<=|<|>=|>)\s*\$(\d+)/i);
+    if (cmpMatch && cmpMatch[1] && cmpMatch[2] && cmpMatch[3]) {
+      const col = cmpMatch[1].toLowerCase();
+      const op = cmpMatch[2];
+      const pIdx = parseInt(cmpMatch[3], 10) - 1;
+      const targetVal = String(params[pIdx] ?? '');
+      const rowVal = String(row[col] ?? '');
+      if (!rowVal) return false;
+      if (op === '<=') return rowVal <= targetVal;
+      if (op === '<') return rowVal < targetVal;
+      if (op === '>=') return rowVal >= targetVal;
+      if (op === '>') return rowVal > targetVal;
+      return false;
+    }
+
+    // Check: col IN (...)
+    const inMatch = cleanCond.match(/([a-z_]+)\s+IN\s*\(([^)]+)\)/i);
+    if (inMatch && inMatch[1] && inMatch[2]) {
+      const col = inMatch[1].toLowerCase();
+      const items = inMatch[2].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, ''));
+      return items.includes(String(row[col] ?? ''));
+    }
+
+    // Check: col IS NULL / col IS NOT NULL
+    const isNullMatch = cleanCond.match(/([a-z_]+)\s+IS\s+(NOT\s+)?NULL/i);
+    if (isNullMatch && isNullMatch[1]) {
+      const col = isNullMatch[1].toLowerCase();
+      const isNot = Boolean(isNullMatch[2]);
+      const val = row[col];
+      if (isNot) return val !== null && val !== undefined;
+      return val === null || val === undefined;
+    }
+
+    // Check: col = $N or col = 'literal'
+    const eqMatch = cleanCond.match(/([a-z_]+)\s*=\s*(?:\$(\d+)|'([^']*)'|"([^"]*)")/i);
+    if (eqMatch && eqMatch[1]) {
+      const col = eqMatch[1].toLowerCase();
+      let targetVal: any;
+      if (eqMatch[2]) {
+        const pIdx = parseInt(eqMatch[2], 10) - 1;
+        targetVal = params[pIdx];
+      } else {
+        targetVal = eqMatch[3] ?? eqMatch[4] ?? '';
+      }
+      return row[col] === targetVal;
+    }
+
     return true;
   }
 }

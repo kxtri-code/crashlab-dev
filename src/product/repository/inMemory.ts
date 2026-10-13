@@ -28,6 +28,7 @@ import type {
   AuditRepository,
   ProductRepositories,
 } from './interfaces.js';
+import { InMemoryRunQueueRepository } from '../queue/repository.js';
 
 function clone<T>(val: T): T {
   return JSON.parse(JSON.stringify(val)) as T;
@@ -479,5 +480,6 @@ export function createInMemoryProductRepositories(): ProductRepositories {
     artifacts: new InMemoryArtifactRepository(),
     candidates: new InMemoryCandidateRepository(),
     audits: new InMemoryAuditRepository(),
+    queue: new InMemoryRunQueueRepository(),
   };
 }

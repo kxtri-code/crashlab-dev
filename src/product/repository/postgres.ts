@@ -34,6 +34,7 @@ import type {
   ProductRepositories,
 } from './interfaces.js';
 import type { PostgresPool } from './postgresPool.js';
+import { PostgresRunQueueRepository } from '../queue/repository.js';
 import { assertNoSecrets } from '../secrets/sanitizer.js';
 
 function toIsoString(val: any): string {
@@ -949,5 +950,6 @@ export function createPostgresProductRepositories(pool: PostgresPool): ProductRe
     artifacts: new PostgresArtifactRepository(pool),
     candidates: new PostgresCandidateRepository(pool),
     audits: new PostgresAuditRepository(pool),
+    queue: new PostgresRunQueueRepository(pool),
   };
 }

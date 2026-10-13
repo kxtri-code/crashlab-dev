@@ -621,3 +621,32 @@ A verified snapshot implementing a provider-neutral physical blob storage layer 
 | Transactional integrity | Cleans up newly written blob if relational metadata insert fails |
 | Tenant security | Cross-workspace artifact requests return 403 / 404 |
 | External network / AI / Billing / Browser | **0** |
+
+---
+
+## Build 12B.2B Checkpoint: PostgreSQL-Backed Asynchronous Run Queue & Worker Dispatcher
+
+A verified snapshot implementing a safe asynchronous worker queue that accepts product test runs from the API, enforces mandatory preflight safety gates before browser execution, claims runs atomically using PostgreSQL row locking (`FOR UPDATE SKIP LOCKED`), executes through an injectable worker boundary, persists execution evidence via `BlobStore`, and centrally governs run lifecycle transitions.
+
+- **Checkpoint tag:** `build12b2b-worker-queue`
+- **Scope:** PostgreSQL-backed `run_queue` table and adapter (`PostgresRunQueueRepository`, `InMemoryRunQueueRepository`), atomic claim and lease allocation, lease heartbeat renewal and release, mandatory preflight safety gate refusing production-like / unauthorized execution with 0 browsers launched, injectable worker boundary (`ExecutionWorker`, `DeterministicMockWorker`), pipeline dispatcher (`RunDispatcher`), graceful background worker polling loop (`WorkerLoop`), worker CLI (`npm run worker -- [--once] [--poll-ms] [--worker-id]`), tenant-safe API endpoints (`POST /api/v1/runs`, `POST /api/v1/runs/:runId/cancel`, `POST /api/v1/runs/:runId/retry`, `GET /api/v1/runs/:runId/queue`), bounded explicit retries with max attempt enforcement, idempotent cancellation, and comprehensive test suite.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,320 passed** (45 files) |
+| Browser test suite (`npm run test:browser`) | **176 passed** (12 files) |
+| Build 12B.2B tests (`build12b2bWorkerQueue.test.ts`) | **32 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| CLI worker (`npm run worker -- --help`, `--once`) | exit 0 |
+| Zero browser in queue unit tests | Verified (Deterministic mock worker) |
+| Preflight safety gate | Refuses production/unapproved targets with 0 browsers and 0 target requests |
+| Lease safety | Prevents live lease theft; reclaims expired leases; terminates updates on lease loss |
+| Retry bounding | Automatic retries permanently disabled; explicit retries bounded by `maxAttempts` |
+| Idempotent cancellation | Queued -> cancelled, running -> cancelling -> cancelled; evidence preserved |
+| Request correlation | `X-Request-Id` preserved and returned across all queue entities and API responses |
+| Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
+| External network / AI / Billing | **0** |

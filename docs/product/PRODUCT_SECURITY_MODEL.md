@@ -66,6 +66,13 @@ Return Tenant-Scoped Entity (with X-Request-Id)
 - **Cryptographic Immutability:** Artifacts calculate and verify SHA-256 hashes upon storage. Conflicting overwrites of existing artifacts are strictly prohibited.
 - **Authorization Before Access:** Reading or downloading artifact binary payloads requires workspace membership and role authorization (`viewer`, `reviewer`, `member`, `owner`). Cross-workspace downloads return 403 Forbidden.
 
+### 2.4 Asynchronous Run Queue Boundary (Build 12B.2B)
+- **Atomic Concurrency Protection:** Worker run claiming utilizes PostgreSQL transactions and row locking (`FOR UPDATE SKIP LOCKED`). Two workers cannot claim the same run simultaneously.
+- **Live Lease Integrity:** Runs under an unexpired lease cannot be stolen. Expired leases may be reclaimed safely by healthy workers.
+- **Worker Identity Sanitization:** Worker IDs are validated against strict alphanumeric/dash/dot patterns (`assertSafeWorkerId`), preventing SQL injection, control characters, or credential leakage in lease fields.
+- **Mandatory Preflight Gate Enforcement:** Workers execute `validateProductTargetPreflight` before launching any browser or contacting any target. Blocked preflight runs launch 0 browsers and make 0 target requests.
+- **Bounded Retries:** Automatic retries are permanently disabled. Manual retries must be explicitly requested, increment `attemptCount`, and remain strictly bounded by `maxAttempts`.
+
 ---
 
 ## 3. Role-Based Access Control (RBAC)

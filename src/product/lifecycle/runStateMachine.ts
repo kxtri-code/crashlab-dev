@@ -17,6 +17,8 @@ export interface TransitionContext {
   readonly hasPassedSteps?: boolean;
   /** Reason for failure, blocking, or cancellation. */
   readonly reason?: string;
+  /** Explicit manual retry request flag. Required to transition 'failed' -> 'queued'. */
+  readonly explicitRetry?: boolean;
 }
 
 export interface TransitionValidationResult {
@@ -27,13 +29,14 @@ export interface TransitionValidationResult {
 
 /** Allowed state transitions map. */
 const ALLOWED_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
-  created: ['preflight', 'cancelled'],
-  preflight: ['queued', 'blocked', 'cancelled'],
-  queued: ['running', 'cancelled'],
-  running: ['completed', 'partial', 'failed', 'blocked', 'cancelled'],
+  created: ['preflight', 'queued', 'cancelled'],
+  preflight: ['running', 'queued', 'blocked', 'cancelled'],
+  queued: ['preflight', 'running', 'cancelled'],
+  running: ['completed', 'partial', 'failed', 'blocked', 'cancelling', 'cancelled'],
+  cancelling: ['cancelled'],
   completed: [],
   partial: [],
-  failed: [],
+  failed: ['queued'],
   blocked: [],
   cancelled: [],
 };
@@ -42,7 +45,6 @@ const ALLOWED_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
   'completed',
   'partial',
-  'failed',
   'blocked',
   'cancelled',
 ] as const;
@@ -75,8 +77,26 @@ export function validateRunTransition(
     };
   }
 
-  // 3. Preflight readiness requirement for 'queued' and 'running'
-  if (nextStatus === 'queued' || nextStatus === 'running') {
+  // 3. Explicit retry requirement for failed -> queued
+  if (currentStatus === 'failed' && nextStatus === 'queued') {
+    if (!context.explicitRetry) {
+      return {
+        valid: false,
+        error: 'Cannot re-queue failed run automatically: explicit retry request is required.',
+      };
+    }
+    if (currentRun.attemptCount !== undefined && currentRun.maxAttempts !== undefined) {
+      if (currentRun.attemptCount >= currentRun.maxAttempts) {
+        return {
+          valid: false,
+          error: `Cannot re-queue run: maximum attempts (${currentRun.maxAttempts}) reached.`,
+        };
+      }
+    }
+  }
+
+  // 4. Preflight readiness requirement for 'running' or 'preflight' -> 'queued'
+  if (nextStatus === 'running' || (currentStatus === 'preflight' && nextStatus === 'queued')) {
     const isReady = context.preflightReady ?? currentRun.preflightStatus === 'ready';
     if (!isReady) {
       return {
@@ -86,7 +106,7 @@ export function validateRunTransition(
     }
   }
 
-  // 4. Completed run requirement: must have valid execution evidence
+  // 5. Completed run requirement: must have valid execution evidence
   if (nextStatus === 'completed') {
     if (context.hasExecutionEvidence === false) {
       return {
@@ -102,7 +122,7 @@ export function validateRunTransition(
     }
   }
 
-  // 5. Invariant check: safeTestMode cannot be bypassed
+  // 6. Invariant check: safeTestMode cannot be bypassed
   if (currentRun.safeTestMode !== true) {
     return {
       valid: false,
@@ -110,7 +130,7 @@ export function validateRunTransition(
     };
   }
 
-  // 6. Map to appropriate audit event
+  // 7. Map to appropriate audit event
   let auditEventType: AuditEventType = 'run.transitioned';
   if (nextStatus === 'running') {
     auditEventType = 'run.started';
@@ -118,6 +138,14 @@ export function validateRunTransition(
     auditEventType = 'run.completed';
   } else if (nextStatus === 'blocked') {
     auditEventType = 'run.preflight_blocked';
+  } else if (nextStatus === 'failed') {
+    auditEventType = 'run.failed';
+  } else if (nextStatus === 'cancelled') {
+    auditEventType = 'run.cancelled';
+  } else if (currentStatus === 'failed' && nextStatus === 'queued') {
+    auditEventType = 'run.retried';
+  } else if (nextStatus === 'queued') {
+    auditEventType = 'run.queued';
   }
 
   return {
