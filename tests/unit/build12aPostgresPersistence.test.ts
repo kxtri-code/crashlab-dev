@@ -444,15 +444,17 @@ describe('Build 12A: PostgreSQL Persistence Adapter Suite', () => {
     it('applies migrations on initial run and is cleanly idempotent on subsequent runs', async () => {
       const pool = new MockPostgresPool();
       const run1 = await runMigrations(pool);
-      expect(run1.applied).toHaveLength(1);
-      expect(run1.applied[0]).toBe('001_initial_product_schema.sql');
+      expect(run1.applied).toHaveLength(2);
+      expect(run1.applied).toContain('001_initial_product_schema.sql');
+      expect(run1.applied).toContain('002_run_queue.sql');
       expect(run1.alreadyApplied).toHaveLength(0);
 
       // Subsequent execution is cleanly idempotent
       const run2 = await runMigrations(pool);
       expect(run2.applied).toHaveLength(0);
-      expect(run2.alreadyApplied).toHaveLength(1);
-      expect(run2.alreadyApplied[0]).toBe('001_initial_product_schema.sql');
+      expect(run2.alreadyApplied).toHaveLength(2);
+      expect(run2.alreadyApplied).toContain('001_initial_product_schema.sql');
+      expect(run2.alreadyApplied).toContain('002_run_queue.sql');
     });
   });
 
@@ -688,28 +690,33 @@ describe('Build 12A: PostgreSQL Persistence Adapter Suite', () => {
       it('creates _migrations table and records applied migration on first run', async () => {
         const testPool = new MockPostgresPool();
         const res = await runMigrations(testPool);
-        expect(res.applied).toHaveLength(1);
+        expect(res.applied).toHaveLength(2);
         expect(res.applied[0]).toBe('001_initial_product_schema.sql');
+        expect(res.applied[1]).toBe('002_run_queue.sql');
         expect(res.alreadyApplied).toHaveLength(0);
 
         const checkRes = await testPool.query<{ name: string; checksum: string }>(
           'SELECT name, checksum FROM _migrations ORDER BY id ASC;',
         );
-        expect(checkRes.rows).toHaveLength(1);
+        expect(checkRes.rows).toHaveLength(2);
         expect(checkRes.rows[0]!.name).toBe('001_initial_product_schema.sql');
         expect(checkRes.rows[0]!.checksum).toBeDefined();
         expect(checkRes.rows[0]!.checksum.length).toBe(64);
+        expect(checkRes.rows[1]!.name).toBe('002_run_queue.sql');
+        expect(checkRes.rows[1]!.checksum).toBeDefined();
+        expect(checkRes.rows[1]!.checksum.length).toBe(64);
       });
 
       it('second migration run is a complete no-op (idempotent)', async () => {
         const testPool = new MockPostgresPool();
         const res1 = await runMigrations(testPool);
-        expect(res1.applied).toHaveLength(1);
+        expect(res1.applied).toHaveLength(2);
 
         const res2 = await runMigrations(testPool);
         expect(res2.applied).toHaveLength(0);
-        expect(res2.alreadyApplied).toHaveLength(1);
+        expect(res2.alreadyApplied).toHaveLength(2);
         expect(res2.alreadyApplied[0]).toBe('001_initial_product_schema.sql');
+        expect(res2.alreadyApplied[1]).toBe('002_run_queue.sql');
       });
 
       it('refuses execution when checksum mismatch is detected on already-applied migration', async () => {

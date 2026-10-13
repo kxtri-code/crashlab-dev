@@ -6,7 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { PostgresPool } from './postgresPool.js';
 
@@ -207,6 +207,54 @@ CREATE INDEX IF NOT EXISTS idx_audit_workspace_timestamp ON audit_events(workspa
 CREATE INDEX IF NOT EXISTS idx_audit_workspace_event_type ON audit_events(workspace_id, event_type);
 `;
 
+/**
+ * Built-in run queue SQL migration (002_run_queue.sql).
+ * Kept in code to ensure deterministic availability across all test and runtime contexts.
+ */
+export const RUN_QUEUE_MIGRATION_SQL = `
+-- =============================================================================
+-- CrashLab Product Schema Migration: Run Queue (002_run_queue.sql)
+-- Build 12B.2B: PostgreSQL-Backed Asynchronous Run Queue and Worker Dispatcher
+--
+-- Enforces:
+-- 1. Multi-tenant workspace, project, target, journey, and run foreign key integrity
+-- 2. Concurrency-safe queue tracking with lease management
+-- 3. Atomic claiming via queue_status and available_at indexes
+-- 4. Safe constraints on queue_status, attempt_count, and max_attempts
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS run_queue (
+  run_id VARCHAR(36) PRIMARY KEY REFERENCES test_runs(id) ON DELETE CASCADE,
+  workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id VARCHAR(36) NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  target_id VARCHAR(36) NOT NULL REFERENCES target_environments(id) ON DELETE CASCADE,
+  journey_id VARCHAR(36) NOT NULL REFERENCES approved_journeys(id) ON DELETE CASCADE,
+  queue_status VARCHAR(32) NOT NULL DEFAULT 'queued',
+  attempt_count INTEGER NOT NULL DEFAULT 1,
+  max_attempts INTEGER NOT NULL DEFAULT 1,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  lease_owner VARCHAR(128),
+  lease_expiry TIMESTAMPTZ,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  last_error TEXT,
+  cancellation_timestamp TIMESTAMPTZ,
+  request_id VARCHAR(64),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_run_queue_status CHECK (queue_status IN ('queued', 'preflight', 'running', 'cancelling', 'completed', 'failed', 'blocked', 'cancelled')),
+  CONSTRAINT chk_run_queue_attempt_count CHECK (attempt_count >= 1),
+  CONSTRAINT chk_run_queue_max_attempts CHECK (max_attempts >= 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_queue_claim ON run_queue(queue_status, available_at);
+CREATE INDEX IF NOT EXISTS idx_run_queue_lease ON run_queue(lease_owner, lease_expiry);
+CREATE INDEX IF NOT EXISTS idx_run_queue_workspace ON run_queue(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_run_queue_project ON run_queue(project_id);
+CREATE INDEX IF NOT EXISTS idx_run_queue_target ON run_queue(target_id);
+CREATE INDEX IF NOT EXISTS idx_run_queue_journey ON run_queue(journey_id);
+`;
+
 function normalizeSqlForHashing(content: string): string {
   return content.replace(/\r\n/g, '\n').trim();
 }
@@ -216,18 +264,28 @@ export function sha256(content: string): string {
 }
 
 /**
- * Loads standard migrations.
+ * Loads standard migrations in deterministic ascending order.
  */
 export async function loadStandardMigrations(migrationsDir?: string): Promise<readonly MigrationFile[]> {
   const dir = migrationsDir ?? resolve(process.cwd(), 'migrations');
   try {
-    const filePath = resolve(dir, '001_initial_product_schema.sql');
-    const sql = await readFile(filePath, 'utf8');
-    return [{ name: '001_initial_product_schema.sql', sql }];
+    const entries = await readdir(dir);
+    const sqlFiles = entries.filter((f) => f.endsWith('.sql')).sort();
+    if (sqlFiles.length > 0) {
+      const results: MigrationFile[] = [];
+      for (const name of sqlFiles) {
+        const sql = await readFile(resolve(dir, name), 'utf8');
+        results.push({ name, sql });
+      }
+      return results;
+    }
   } catch {
     // Fallback to built-in SQL
-    return [{ name: '001_initial_product_schema.sql', sql: INITIAL_MIGRATION_SQL }];
   }
+  return [
+    { name: '001_initial_product_schema.sql', sql: INITIAL_MIGRATION_SQL },
+    { name: '002_run_queue.sql', sql: RUN_QUEUE_MIGRATION_SQL },
+  ];
 }
 
 /**

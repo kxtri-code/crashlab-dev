@@ -46,7 +46,22 @@ The initial migration provisions all 10 domain entities:
 
 ---
 
-## 3. CLI Execution
+## 3. Queue Migration: `002_run_queue.sql` (Build 12B.2B)
+
+Provisions the dedicated PostgreSQL run queue table supporting atomic claiming (`FOR UPDATE SKIP LOCKED`), lease renewals, and worker dispatching:
+
+| Table | Primary Key | Workspace Boundary | Foreign Keys | Key Indexes |
+| :--- | :--- | :--- | :--- | :--- |
+| `run_queue` | `run_id VARCHAR(36)` | `workspace_id` | `run_id -> test_runs`<br>`workspace_id -> workspaces`<br>`project_id -> projects`<br>`target_id -> targets`<br>`journey_id -> journeys` | `(queue_status, available_at)`<br>`(lease_owner, lease_expiry)`<br>`(workspace_id)` |
+
+### Constraints:
+- `chk_run_queue_status`: Restricts `queue_status` to `'queued', 'preflight', 'running', 'cancelling', 'completed', 'failed', 'blocked', 'cancelled'`.
+- `chk_run_queue_attempt_count`: Ensures `attempt_count >= 1`.
+- `chk_run_queue_max_attempts`: Ensures `max_attempts >= 1`.
+
+---
+
+## 4. CLI Execution
 
 To apply pending migrations:
 

@@ -635,9 +635,11 @@ A verified snapshot implementing a safe asynchronous worker queue that accepts p
 
 | Check | Result |
 | :--- | :--- |
-| Full unit test suite (`npm run test:unit`) | **1,320 passed** (45 files) |
+| Full unit test suite (`npm run test:unit`) | **1,329 passed** (46 files) |
 | Browser test suite (`npm run test:browser`) | **176 passed** (12 files) |
-| Build 12B.2B tests (`build12b2bWorkerQueue.test.ts`) | **32 passed** |
+| Build 12B.2B queue tests (`build12b2bWorkerQueue.test.ts`) | **32 passed** |
+| Build 12B.2B migration tests (`build12b2bRunQueueMigration.test.ts`) | **9 passed** |
+| Supabase PostgreSQL migration (`002_run_queue.sql`) | Applied cleanly, verified idempotent |
 | `npm run typecheck` | exit 0 |
 | `npm run build` | exit 0 |
 | Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
