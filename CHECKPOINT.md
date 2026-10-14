@@ -696,3 +696,40 @@ A verified snapshot enabling an authenticated dashboard user to select an approv
   - Candidate defect terminology alignment: permanently deprecates review status `confirmed` in favor of `accepted`. Permitted review statuses: `open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`.
   - Invariant preservation: permanent UI rendering of `confirmedBug: false` and `confirmed: false`. Human acceptance signifies triage tracking, not bug confirmation.
   - Real-time bounded run monitor across all lifecycle states (`queued`, `preflight`, `running`, `completed`, `partial`, `failed`, `blocked`, `cancelling`, `cancelled`) with 13 standard metrics, idempotent cancellation, and zero secret/filesystem path leakage.
+
+---
+
+## Build 12D.1 Checkpoint: Production Authentication and Deployment Readiness
+
+A verified snapshot replacing development-only authentication and local-only assumptions with production-safe boundaries, asymmetric Supabase OIDC/JWT verification, strict environment validation, public health and readiness probes, and request hardening to prepare CrashLab for a private hosted beta.
+
+- **Checkpoint tag:** `build12d1-production-auth`
+- **Scope:**
+  - Asymmetric Supabase OIDC/JWT verification boundary (`JwtVerifier`, `JwksClient`) using native `node:crypto` primitives for RS256/ES256 signature verification.
+  - Claims validation: signature, issuer (`SUPABASE_JWT_ISSUER`), audience (`SUPABASE_JWT_AUDIENCE`), expiry (`exp`), not-before (`nbf`), subject (`sub`), and token structure.
+  - Safe JWKS caching with bounded expiry (10 min TTL) and key rotation handling (unknown `kid` triggers automatic cache refresh).
+  - Explicit development vs production separation:
+    - `PRODUCT_AUTH_MODE=development`: allows local HMAC dev tokens and `X-User-Id` header fallbacks.
+    - `PRODUCT_AUTH_MODE=production`: strictly rejects HMAC dev tokens, strictly rejects `X-User-Id`, and fails closed if Supabase JWT configuration is incomplete.
+  - Fail-closed identity mapping: verified token `sub` mapped to existing CrashLab user. Unprovisioned identities safely receive HTTP 401 `USER_NOT_PROVISIONED` with zero privilege escalation.
+  - Operational probes: public `GET /health` (liveness) and `GET /readiness` (database connectivity and storage readiness) with zero credentials exposed.
+  - Network and API hardening: bounded 1MB request bodies (HTTP 413 `PAYLOAD_TOO_LARGE`), CORS allowlist configuration via `PRODUCT_CORS_ALLOWED_ORIGINS` (wildcards prohibited in production), and 500 error sanitization.
+  - Physical blob storage boundary: local filesystem storage rejected in production mode without explicit `PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true` override.
+  - Worker isolation: background workers disabled by default and never started automatically by web server processes.
+  - Frontend secret audit: confirmed zero server secrets (`DATABASE_URL`, `PRODUCT_AUTH_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, private keys) bundled into client-side assets.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,395 passed** (49 files) |
+| Browser test suite (`npm run test:browser`) | **193 passed** (14 files) |
+| Build 12D.1 unit tests (`build12d1ProductionAuth.test.ts`) | **24 passed** (verifying all Section L requirements) |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Git diff whitespace / syntax check (`git diff --check`) | clean, exit 0 |
+| `.env` staging status | **NOT staged / NOT tracked** |
+| Target network traffic | **Zero external target traffic** |
+| Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
+| External network / AI / Billing | **0** |

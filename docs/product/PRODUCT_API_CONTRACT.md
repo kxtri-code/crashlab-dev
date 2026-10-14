@@ -24,11 +24,15 @@ CrashLab maintains a strict separation between two distinct HTTP services:
 
 ### Request Headers
 - `Content-Type: application/json`
-- `Authorization: Bearer <token>`: Required in production mode (`PRODUCT_AUTH_MODE=production`).
-- `X-User-Id: <user_id>`: Permitted only in explicit development mode (`PRODUCT_AUTH_MODE=development`). Untrusted and rejected in production.
+- `Authorization: Bearer <token>`: Required in production mode (`PRODUCT_AUTH_MODE=production`). Must be a valid RS256/ES256 OIDC/JWT signed by the configured identity provider (e.g. Supabase Auth). In development mode (`PRODUCT_AUTH_MODE=development`), local HMAC-SHA256 dev tokens are also accepted.
+- `X-User-Id: <user_id>`: Permitted only in explicit development mode (`PRODUCT_AUTH_MODE=development`). Untrusted and rejected with HTTP 401 in production.
 
 ### Response Headers
 - `X-Request-Id: <req_...>`: Unique request correlation ID generated for every request.
+- `Access-Control-Allow-Origin`: Explicit origin matched against `PRODUCT_CORS_ALLOWED_ORIGINS` (wildcards prohibited in production).
+
+### Request Size Limits
+- Request bodies are strictly bounded to a maximum of 1MB (1,048,576 bytes) by default. Requests exceeding this bound are rejected with HTTP 413 `PAYLOAD_TOO_LARGE`.
 
 ### Response Format
 All responses return standardized JSON with request correlation:
@@ -42,7 +46,7 @@ All responses return standardized JSON with request correlation:
 }
 ```
 
-#### Error (400, 401, 403, 404, 500)
+#### Error (400, 401, 403, 404, 413, 422, 500)
 ```json
 {
   "success": false,
@@ -55,14 +59,23 @@ All responses return standardized JSON with request correlation:
 }
 ```
 
+Common error codes:
+- `UNAUTHORIZED`: Missing, malformed, expired, or invalid token.
+- `USER_NOT_PROVISIONED`: Verified JWT identity does not map to an existing CrashLab user.
+- `FORBIDDEN`: User lacks required workspace membership or role permission.
+- `NOT_FOUND`: Referenced entity does not exist or belongs to another tenant.
+- `PAYLOAD_TOO_LARGE`: Request body exceeded maximum byte limit.
+- `PREFLIGHT_BLOCKED`: Journey dispatch failed preflight safety validation.
+- `INTERNAL_SERVER_ERROR`: Unhandled error (sanitized in production).
+
 ---
 
 ## 3. Endpoints
 
 ### 3.1 `GET /health`
-System health check.
+Liveness probe.
 - **Auth:** None.
-- **Response:**
+- **Response:** `200 OK`
   ```json
   {
     "status": "ok",
@@ -72,7 +85,33 @@ System health check.
   }
   ```
 
-### 3.2 `GET /api/v1/workspaces`
+### 3.2 `GET /readiness`
+Deep dependency readiness probe (database connectivity and storage checks).
+- **Auth:** None.
+- **Response (Success):** `200 OK`
+  ```json
+  {
+    "status": "ready",
+    "checks": {
+      "database": "connected",
+      "storage": "ready"
+    },
+    "timestamp": "2026-10-14T10:00:00.000Z"
+  }
+  ```
+- **Response (Failure):** `503 Service Unavailable`
+  ```json
+  {
+    "status": "not_ready",
+    "checks": {
+      "database": "failed",
+      "storage": "ready"
+    },
+    "timestamp": "2026-10-14T10:00:00.000Z"
+  }
+  ```
+
+### 3.3 `GET /api/v1/workspaces`
 List workspaces accessible to the authenticated user.
 - **Headers:** `X-User-Id: <usr_...>`
 - **Response:** `200 OK`

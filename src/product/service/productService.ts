@@ -148,6 +148,31 @@ export class ProductService {
     return this.recordAudit(workspaceId, actorUserId, eventType, entityType, entityId, metadata);
   }
 
+  /** Checks database connectivity safely without exposing credentials. */
+  async checkDatabaseConnectivity(): Promise<boolean> {
+    try {
+      await this.repos.users.findById('__health_probe__');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Checks storage provider readiness safely. */
+  async checkStorageReadiness(): Promise<boolean> {
+    try {
+      await this.blobs.exists({
+        workspaceId: 'ws_health',
+        projectId: 'prj_health',
+        runId: 'run_health',
+        artifactId: 'art_health',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // --- Users -----------------------------------------------------------------
 
   async createUser(input: CreateUserInput): Promise<User> {

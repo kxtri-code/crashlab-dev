@@ -119,7 +119,7 @@ describe('Build 12C.2: Preflight-Gated Run Dispatch Browser Integration (Playwri
 
     apiServer = createProductApiServer({
       service,
-      authMode: 'production',
+      authMode: 'development',
       authSecret: TEST_SECRET,
       port: 0,
     });

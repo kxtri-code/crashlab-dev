@@ -138,7 +138,7 @@ describe('Build 12C.1: Product Dashboard Browser Integration (Playwright)', () =
     // Start API Server
     apiServer = createProductApiServer({
       service,
-      authMode: 'production',
+      authMode: 'development',
       authSecret: TEST_SECRET,
       port: 0,
     });

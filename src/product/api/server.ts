@@ -19,8 +19,9 @@ import type { ProductRepositories } from '../repository/interfaces.js';
 import type { PostgresPool } from '../repository/postgresPool.js';
 import type { ProductStorageType } from '../storage.js';
 import { resolveProductRepositories } from '../storage.js';
-import type { AuthConfig, AuthMode } from '../auth/identity.js';
+import type { AuthConfig, AuthMode, ProductionAuthConfig } from '../auth/identity.js';
 import { loadAuthConfigFromEnv } from '../auth/identity.js';
+import type { JwtVerifier, JwksClient } from '../auth/jwtVerifier.js';
 import type { BlobStore } from '../blob/interfaces.js';
 import type { BlobStoreConfig } from '../blob/config.js';
 import { resolveBlobStore } from '../blob/config.js';
@@ -43,8 +44,14 @@ export interface ProductApiServerOptions {
   readonly authConfig?: AuthConfig;
   readonly authMode?: AuthMode;
   readonly authSecret?: string;
+  readonly productionAuth?: ProductionAuthConfig;
+  readonly jwtVerifier?: JwtVerifier;
+  readonly jwksClient?: JwksClient;
   readonly defaultUserId?: string;
   readonly idGenerator?: IdGenerator;
+  readonly allowedOrigins?: readonly string[];
+  readonly corsAllowedOrigins?: readonly string[];
+  readonly maxRequestBodyBytes?: number;
 }
 
 export class ProductApiServer {
@@ -105,9 +112,21 @@ export class ProductApiServer {
     const resolvedSecret =
       options.authSecret ?? options.authConfig?.authSecret ?? envAuthConfig.authSecret;
 
+    const productionAuth =
+      options.productionAuth ?? options.authConfig?.productionAuth ?? envAuthConfig.productionAuth;
+
+    const jwksClient =
+      options.jwksClient ?? options.authConfig?.jwksClient ?? envAuthConfig.jwksClient;
+
+    const jwtVerifier =
+      options.jwtVerifier ?? options.authConfig?.jwtVerifier ?? envAuthConfig.jwtVerifier;
+
     const authConfig: AuthConfig = {
       authMode: resolvedMode,
       authSecret: resolvedSecret,
+      productionAuth,
+      jwksClient,
+      jwtVerifier,
     };
 
     const context: RouteHandlerContext = {
@@ -115,6 +134,8 @@ export class ProductApiServer {
       authConfig,
       defaultUserId: options.defaultUserId,
       idGenerator: options.idGenerator,
+      allowedOrigins: options.allowedOrigins ?? options.corsAllowedOrigins,
+      maxRequestBodyBytes: options.maxRequestBodyBytes,
     };
 
     this.server = createServer((req, res) => {

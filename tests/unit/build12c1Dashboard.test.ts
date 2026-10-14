@@ -194,7 +194,7 @@ describe('Build 12C.1: Authenticated Product Dashboard Unit Suite', () => {
     // Start API Server on ephemeral port
     apiServer = createProductApiServer({
       service,
-      authMode: 'production',
+      authMode: 'development',
       authSecret: TEST_SECRET,
       port: 0,
     });

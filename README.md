@@ -2788,3 +2788,33 @@ Build 12C.2 introduces preflight-gated test run creation and dispatch directly f
   - Defect review status `confirmed` is permanently deprecated in favor of `accepted`.
   - Permitted statuses: `open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`.
   - Permanent invariants: `confirmedBug: false` and `confirmed: false`. Human acceptance signifies triage tracking, not bug confirmation.
+
+---
+
+## Build 12D.1: Production Authentication and Deployment Readiness
+
+Build 12D.1 replaces development-only authentication and local assumptions with production-safe boundaries, preparing CrashLab for a private hosted beta.
+
+- **Asymmetric Supabase OIDC/JWT Verification Boundary:**
+  - Employs native `node:crypto` Web Crypto / KeyObject primitives for zero-dependency RS256/ES256 verification.
+  - Safe JWKS caching with bounded expiry (10 min TTL) and key rotation handling (unknown `kid` triggers automatic cache refresh).
+  - Validates full signature, issuer (`SUPABASE_JWT_ISSUER`), audience (`SUPABASE_JWT_AUDIENCE`), expiration (`exp`), not-before (`nbf`), subject (`sub`), and token structure.
+- **Strict Development vs Production Separation:**
+  - `PRODUCT_AUTH_MODE=development`: allows local HMAC dev tokens and `X-User-Id` header fallbacks.
+  - `PRODUCT_AUTH_MODE=production`: strictly rejects HMAC dev tokens, strictly rejects `X-User-Id`, and fails closed if Supabase JWT configuration is incomplete.
+- **Fail-Closed Identity Mapping:**
+  - Maps verified token `sub` to registered CrashLab user accounts.
+  - Unknown identities safely receive HTTP 401 `USER_NOT_PROVISIONED`. Uninvited identities cannot self-provision or elevate privileges.
+- **Operational Probes & Endpoints:**
+  - `GET /health`: Public liveness heartbeat.
+  - `GET /readiness`: Public database connectivity and storage readiness probe (HTTP 200 or 503) without exposing credentials.
+- **Network & Request Hardening:**
+  - Bounded request body limits (1MB default; HTTP 413 `PAYLOAD_TOO_LARGE` on breach).
+  - CORS allowlist via `PRODUCT_CORS_ALLOWED_ORIGINS` (wildcards prohibited in production).
+  - 500 error sanitization in production mode (hides SQL and internal error details).
+- **Physical Blob Storage Safety:**
+  - Local filesystem storage (`PRODUCT_BLOB_STORE=local`) refused in production mode unless explicitly overridden with `PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true`.
+- **Worker Isolation:**
+  - Background workers are disabled by default and never started automatically by web server processes.
+- **Frontend Secret Audit:**
+  - Confirmed zero server secrets (`DATABASE_URL`, `PRODUCT_AUTH_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, private keys) bundled into client-side assets.

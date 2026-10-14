@@ -25,25 +25,59 @@ import { authenticateRequest } from '../auth/middleware.js';
 import type { ArtifactType } from '../types/artifact.js';
 import type { IdGenerator } from '../util/id.js';
 
+export class PayloadTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PayloadTooLargeError';
+  }
+}
+
 export interface RouteHandlerContext {
   readonly service: ProductService;
   readonly authConfig?: AuthConfig;
   readonly defaultUserId?: string;
   readonly idGenerator?: IdGenerator;
+  readonly allowedOrigins?: readonly string[];
+  readonly maxRequestBodyBytes?: number;
+}
+
+function resolveCorsHeaders(
+  req: IncomingMessage,
+  isProduction: boolean,
+  allowedOrigins: readonly string[],
+): Record<string, string> {
+  const origin = req.headers['origin'];
+  const headers: Record<string, string> = {
+    'access-control-allow-methods': 'GET, POST, OPTIONS, DELETE',
+    'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization, X-Request-Id',
+  };
+
+  if (!isProduction) {
+    headers['access-control-allow-origin'] = '*';
+  } else if (origin && allowedOrigins.includes(origin)) {
+    headers['access-control-allow-origin'] = origin;
+    headers['vary'] = 'Origin';
+  }
+  // In production, if origin is not explicitly allowlisted, access-control-allow-origin is NOT set.
+
+  return headers;
 }
 
 function sendJson(
   res: ServerResponse,
   statusCode: number,
-  payload: ApiResponse<unknown> | HealthResponse,
+  payload: ApiResponse<unknown> | HealthResponse | Record<string, unknown>,
   requestId?: string,
+  corsHeaders?: Record<string, string>,
 ): void {
   const headers: Record<string, string> = {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization',
+    ...(corsHeaders ?? {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, POST, OPTIONS, DELETE',
+      'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization, X-Request-Id',
+    }),
   };
   if (requestId) {
     headers['x-request-id'] = requestId;
@@ -60,6 +94,7 @@ function sendError(
   message: string,
   requestId?: string,
   details?: unknown,
+  corsHeaders?: Record<string, string>,
 ): void {
   sendJson(
     res,
@@ -70,13 +105,28 @@ function sendError(
       requestId,
     },
     requestId,
+    corsHeaders,
   );
 }
 
-async function parseBody<T>(req: IncomingMessage): Promise<T> {
+async function parseBody<T>(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<T> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    let receivedBytes = 0;
+    req.on('data', (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      receivedBytes += buf.length;
+      if (receivedBytes > maxBytes) {
+        req.destroy();
+        reject(
+          new PayloadTooLargeError(
+            `Request payload exceeds maximum allowed size of ${Math.floor(maxBytes / 1024)}KB.`,
+          ),
+        );
+        return;
+      }
+      chunks.push(buf);
+    });
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw || raw.trim() === '') {
@@ -103,12 +153,17 @@ export async function handleProductApiRequest(
   const pathname = urlObj.pathname;
   const searchParams = urlObj.searchParams;
 
+  const authConfig = context.authConfig ?? loadAuthConfigFromEnv();
+  const isProduction = authConfig.authMode === 'production';
+  const configuredCors =
+    context.allowedOrigins ??
+    (process.env.PRODUCT_CORS_ALLOWED_ORIGINS
+      ? process.env.PRODUCT_CORS_ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+      : []);
+  const corsHeaders = resolveCorsHeaders(req, isProduction, configuredCors);
+
   if (method === 'OPTIONS') {
-    res.writeHead(204, {
-      'access-control-allow-origin': '*',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-      'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization',
-    });
+    res.writeHead(204, corsHeaders);
     res.end();
     return;
   }
@@ -117,25 +172,45 @@ export async function handleProductApiRequest(
     context.idGenerator?.generateId('req') ?? `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
   // 1. Health endpoint (public, zero secrets)
-  if (pathname === '/health' && method === 'GET') {
+  if ((pathname === '/health' || pathname === '/api/v1/health') && method === 'GET') {
     sendJson(
       res,
       200,
       {
         status: 'ok',
         version: '0.1.0',
-        appEnvironment: 'local',
-        mode: 'hosted-mvp-foundation',
+        appEnvironment: isProduction ? 'production' : 'development',
+        mode: isProduction ? 'hosted-beta' : 'hosted-mvp-foundation',
         requestId: fallbackRequestId,
       },
       fallbackRequestId,
+      corsHeaders,
+    );
+    return;
+  }
+
+  // 1.5 Readiness endpoint (public, connectivity check, zero secrets)
+  if ((pathname === '/readiness' || pathname === '/api/v1/readiness') && method === 'GET') {
+    const dbOk = await context.service.checkDatabaseConnectivity();
+    const storageOk = await context.service.checkStorageReadiness();
+    const isReady = dbOk && storageOk;
+    sendJson(
+      res,
+      isReady ? 200 : 503,
+      {
+        status: isReady ? 'ready' : 'not_ready',
+        database: dbOk ? 'connected' : 'unreachable',
+        storage: storageOk ? 'ready' : 'unreachable',
+        requestId: fallbackRequestId,
+      },
+      fallbackRequestId,
+      corsHeaders,
     );
     return;
   }
 
   // 2. Authentication Enforcement
-  const authConfig = context.authConfig ?? loadAuthConfigFromEnv();
-  const authResult = authenticateRequest(req, {
+  const authResult = await authenticateRequest(req, {
     authConfig,
     defaultUserId: context.defaultUserId,
     idGenerator: context.idGenerator,
@@ -148,6 +223,8 @@ export async function handleProductApiRequest(
       authResult.error?.code ?? 'UNAUTHORIZED',
       authResult.error?.message ?? 'Authentication required.',
       authResult.requestId,
+      undefined,
+      corsHeaders,
     );
     return;
   }
@@ -155,6 +232,23 @@ export async function handleProductApiRequest(
   const identity = authResult.identity;
   const actorUserId = identity.userId;
   const requestId = identity.requestId;
+
+  // 2.2 Unknown user verification in production mode (Requirement C: Identity mapping)
+  if (isProduction) {
+    const user = await context.service.getUser(actorUserId);
+    if (!user) {
+      sendError(
+        res,
+        401,
+        'USER_NOT_PROVISIONED',
+        'Authenticated user is not provisioned in this CrashLab instance.',
+        requestId,
+        undefined,
+        corsHeaders,
+      );
+      return;
+    }
+  }
 
   let targetedWorkspaceId: string | undefined;
 
@@ -619,18 +713,21 @@ export async function handleProductApiRequest(
         'x-artifact-sha256': artifact.sha256,
         'x-request-id': requestId,
         'cache-control': 'private, no-transform',
-        'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, OPTIONS',
-        'access-control-allow-headers': 'Content-Type, X-User-Id, Authorization',
-        'access-control-expose-headers': 'Content-Type, Content-Length, ETag, X-Request-Id, X-Artifact-Sha256, X-Artifact-Type',
+        ...corsHeaders,
+        'access-control-expose-headers':
+          'Content-Type, Content-Length, ETag, X-Request-Id, X-Artifact-Sha256, X-Artifact-Type',
       });
       res.end(payload.content);
       return;
     }
 
     // Unknown endpoint
-    sendError(res, 404, 'NOT_FOUND', `Route not found: ${method} ${pathname}`, requestId);
+    sendError(res, 404, 'NOT_FOUND', `Route not found: ${method} ${pathname}`, requestId, undefined, corsHeaders);
   } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      sendError(res, 413, 'PAYLOAD_TOO_LARGE', err.message, requestId, undefined, corsHeaders);
+      return;
+    }
     if (err instanceof TenantAccessDeniedError) {
       if (targetedWorkspaceId) {
         try {
@@ -646,24 +743,28 @@ export async function handleProductApiRequest(
           // Do not fail the request if audit recording fails
         }
       }
-      sendError(res, 403, 'FORBIDDEN', err.message, requestId);
+      sendError(res, 403, 'FORBIDDEN', err.message, requestId, undefined, corsHeaders);
       return;
     }
     if (err instanceof EntityNotFoundError) {
-      sendError(res, 404, 'NOT_FOUND', err.message, requestId);
+      sendError(res, 404, 'NOT_FOUND', err.message, requestId, undefined, corsHeaders);
       return;
     }
     if (err instanceof InvalidEntityRelationError) {
-      sendError(res, 400, 'BAD_REQUEST', err.message, requestId);
+      sendError(res, 400, 'BAD_REQUEST', err.message, requestId, undefined, corsHeaders);
       return;
     }
     if (err instanceof PreflightRefusedError) {
       sendError(res, 422, 'PREFLIGHT_BLOCKED', err.message, requestId, {
         failureReasons: err.failureReasons,
         status: err.preflightStatus,
-      });
+      }, corsHeaders);
       return;
     }
-    sendError(res, 500, 'INTERNAL_SERVER_ERROR', (err as Error).message, requestId);
+    const isProd = authConfig.authMode === 'production';
+    const rawMsg = (err as Error).message || 'Internal server error';
+    const isSensitive = /select|insert|update|delete|table|relation|database_url|password|secret|key|token|users|memberships|\/Users\/|[a-zA-Z]:\\/i.test(rawMsg);
+    const safeMsg = isProd && isSensitive ? 'An internal server error occurred.' : rawMsg;
+    sendError(res, 500, 'INTERNAL_SERVER_ERROR', safeMsg, requestId, undefined, corsHeaders);
   }
 }

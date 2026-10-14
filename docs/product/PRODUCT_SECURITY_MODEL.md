@@ -189,3 +189,28 @@ Before any run is created in storage or committed to the PostgreSQL queue, the s
 ### 7.3 Candidate Findings & Trust Invariants
 - **Non-Negotiable Invariants:** `confirmed: false` and `confirmedBug: false` remain permanent across all dashboard screens, database tables, and API contracts.
 - **Human Acceptance vs Bug Confirmation:** The candidate status `accepted` means an authorized engineer has acknowledged the candidate lead for tracking or triage. It does **not** mean the bug is automatically confirmed. The dashboard strictly prohibits displaying or using `confirmed` as a defect status.
+
+---
+
+## 8. Production Authentication & Deployment Boundaries (Build 12D.1)
+
+### 8.1 Supabase OIDC/JWT Cryptographic Verification
+- **Provider-Neutral JWT Boundary:** Production mode replaces local HMAC bearer tokens with asymmetric JWT verification using public keys retrieved via standard JWKS (`node:crypto` RSA/ECDSA).
+- **Comprehensive Claims Validation:** Signatures, issuer (`SUPABASE_JWT_ISSUER`), audience (`SUPABASE_JWT_AUDIENCE`), expiration (`exp`), not-before (`nbf`), and subject (`sub`) are strictly validated on every authenticated request.
+- **JWKS Cache & Key Rotation:** Public keys are cached with bounded TTL; unrecognized key IDs trigger an immediate bounded refresh from the JWKS endpoint to handle key rotation seamlessly.
+- **Fail-Closed Separation:** Development HMAC tokens and client-supplied `X-User-Id` headers are strictly rejected with HTTP 401 in production mode.
+
+### 8.2 Identity Mapping & Safe User Provisioning
+- **Subject-to-User Mapping:** The verified JWT `sub` is mapped to existing CrashLab user records.
+- **No Privileged Auto-Creation:** If an authenticated token subject does not exist in the database, the server returns HTTP 401 `USER_NOT_PROVISIONED`. Uninvited identities cannot self-provision workspaces or elevate privileges.
+- **Tenant Authorization:** Workspace membership and RBAC permissions are always checked against database state; client-provided workspace IDs are never trusted blindly.
+
+### 8.3 Frontend & Asset Security Audit
+- **Zero Leaked Secrets:** Frontend JavaScript bundles and static dashboard assets are verified to contain zero server secrets (`DATABASE_URL`, `PRODUCT_AUTH_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, private keys, or internal filesystem paths).
+- **Memory-Only Token Lifetime:** Auth tokens are held solely in browser application state, cleared completely on logout, and never exposed in the DOM or logs.
+
+### 8.4 Network & Operational Hardening
+- **Bounded Request Limits:** Request payloads are capped at 1MB (HTTP 413 on breach).
+- **CORS Allowlist:** Production CORS enforces explicit domain whitelists and forbids wildcard `*` origins.
+- **Storage Safety:** Production mode refuses local filesystem blob storage without explicit private-beta confirmation.
+- **Safe Probes:** `/health` and `/readiness` endpoints expose zero credentials while providing reliable liveness and database connectivity checks.

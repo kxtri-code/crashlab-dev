@@ -652,7 +652,7 @@ describe('Build 12B.2A: Secure Artifact Blob Storage', () => {
       server = new ProductApiServer({
         repositories: repo,
         blobStore,
-        authMode: 'production',
+        authMode: 'development',
         authSecret: testSecret,
       });
 

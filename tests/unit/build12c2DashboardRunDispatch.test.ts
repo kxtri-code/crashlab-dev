@@ -167,7 +167,7 @@ describe('Build 12C.2: Preflight-Gated Journey Execution Dispatch Unit Suite', (
 
     apiServer = createProductApiServer({
       service,
-      authMode: 'production',
+      authMode: 'development',
       authSecret: TEST_SECRET,
       port: 0,
     });
