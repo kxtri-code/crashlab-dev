@@ -23,16 +23,17 @@ ProductService.storeArtifact(...)
    3. Sanitize metadata (assertNoSecrets)
    4. Put physical blob via BlobStore
           │
-          ├─────────────────────────────────────────────────┐
-          ▼                                                 ▼
-   LocalBlobStore (Local FS)                 S3CompatibleBlobStore (Cloud)
-   - Root: PRODUCT_BLOB_ROOT                 - Bucket: PRODUCT_BLOB_S3_BUCKET
-   - Deterministic Key                       - S3 Object Key
-   - Atomic Write via temp+rename            - ETag / Checksum Header
-   - SHA-256 verification                    - Conflicting overwrite blocked
-   - Immutability check                      │
-          │                                         │
-          └─────────────────────────────────────────┘
+          ├─────────────────────────┬─────────────────────────┐
+          ▼                         ▼                         ▼
+   LocalBlobStore (Local FS)  SupabaseBlobStore (Cloud)  S3CompatibleBlobStore (Adapter)
+   - Root: PRODUCT_BLOB_ROOT  - Bucket: SUPABASE_BUCKET   - Bucket: S3_BUCKET
+   - Deterministic Key        - Deterministic Key        - S3 Object Key
+   - Atomic Write             - REST API (/storage/v1)   - ETag / Checksum Header
+   - SHA-256 verification     - SHA-256 verification     - Conflicting overwrite blocked
+   - Immutability check       - Private bucket enforced  │
+          │                   - Immutability check       │
+          │                         │                    │
+          └─────────────────────────┴────────────────────┘
           │
           ▼
    5. Insert metadata into run_artifacts
@@ -153,13 +154,23 @@ All endpoints require Bearer token authorization and enforce workspace isolation
 ## 5. Configuration Reference
 
 ```ini
-# Provider: 'local' (default) or 's3'
-PRODUCT_BLOB_STORE=local
+# Provider: 'local' (development/test) or 'supabase' (production) or 's3' (boundary)
+PRODUCT_BLOB_STORE=supabase
 
-# Safe local filesystem root for development/tests
+# Safe local filesystem root for development/tests (when PRODUCT_BLOB_STORE=local)
 PRODUCT_BLOB_ROOT=./.artifacts
 
-# Optional S3-compatible configuration
+# Production Supabase Storage configuration (when PRODUCT_BLOB_STORE=supabase)
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_STORAGE_BUCKET=crashlab-artifacts
+# Server-only service-role key (never expose to client or logs)
+SUPABASE_SERVICE_ROLE_KEY=eyJh...
+# Maximum artifact byte size (default: 52428800 = 50MB)
+PRODUCT_BLOB_MAX_BYTES=52428800
+
+# Optional S3-compatible configuration (when PRODUCT_BLOB_STORE=s3)
 # PRODUCT_BLOB_S3_BUCKET=crashlab-evidence-vault
 # PRODUCT_BLOB_S3_PREFIX=artifacts/
 ```
+
+See [SUPABASE_STORAGE_SETUP.md](file:///c:/Users/kxtri/Crash-labs/docs/product/SUPABASE_STORAGE_SETUP.md) for full bucket provisioning and operational instructions.

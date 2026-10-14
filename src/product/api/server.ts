@@ -52,7 +52,9 @@ export interface ProductApiServerOptions {
   readonly allowedOrigins?: readonly string[];
   readonly corsAllowedOrigins?: readonly string[];
   readonly maxRequestBodyBytes?: number;
+  readonly maxArtifactBytes?: number;
 }
+
 
 export class ProductApiServer {
   private readonly server: Server;
@@ -136,7 +138,9 @@ export class ProductApiServer {
       idGenerator: options.idGenerator,
       allowedOrigins: options.allowedOrigins ?? options.corsAllowedOrigins,
       maxRequestBodyBytes: options.maxRequestBodyBytes,
+      maxArtifactBytes: options.maxArtifactBytes,
     };
+
 
     this.server = createServer((req, res) => {
       handleProductApiRequest(req, res, context).catch((err) => {

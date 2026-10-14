@@ -733,3 +733,43 @@ A verified snapshot replacing development-only authentication and local-only ass
 | Target network traffic | **Zero external target traffic** |
 | Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
 | External network / AI / Billing | **0** |
+
+---
+
+## Build 12D.2A Checkpoint: Private Supabase Storage for Production Artifacts
+
+A verified snapshot implementing a real, private object-storage provider for production artifacts (screenshots, Playwright execution traces, HAR network recordings, JSON reports, and execution logs) using Supabase Storage REST API (`/storage/v1`).
+
+- **Checkpoint tag:** `build12d2a-supabase-storage`
+- **Scope:**
+  - **Provider Choice:** Supabase Storage REST API via native Node 20 `fetch` (`SupabaseBlobStore`), requiring zero third-party SDK dependencies while reusing existing Supabase project infrastructure.
+  - **Bucket Privacy Enforcement:** Strictly mandates private buckets (`public: false`). Rejects public buckets both at runtime and during configuration checks.
+  - **Server-Only Credentials:** `SUPABASE_SERVICE_ROLE_KEY` is maintained exclusively on the server. Never bundled into dashboard JavaScript, never exposed via APIs, never stored in audit logs, and never logged in error messages.
+  - **Fail-Closed Configuration:** Missing required storage variables (`SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_SERVICE_ROLE_KEY`) in production fail closed with zero silent fallback to local storage.
+  - **Deterministic Object Addressing:** `workspace/<workspaceId>/project/<projectId>/run/<runId>/artifact/<artifactId>` with strict regex validation rejecting path traversal tokens (`..`), path separators, and control characters.
+  - **Integrity & Immutability:** SHA-256 cryptographic digest calculation and byte length verification. Conflicting overwrites are rejected with `ArtifactImmutableConflictError`; identical uploads are idempotent.
+  - **Atomic Cleanup on DB Failure:** Immediate deletion of newly uploaded blobs from Supabase Storage if PostgreSQL metadata persistence fails, preventing orphaned objects.
+  - **Authenticated Proxied Downloads:** Artifact downloads (`GET /api/v1/artifacts/:artifactId/content`) require valid production JWT, workspace membership, and RBAC authorization. Content is streamed through the Product API with verified `Content-Type`, `Content-Length`, `ETag`, and `X-Artifact-Sha256`. Zero private bucket URLs or access tokens are exposed to the client.
+  - **CLI Storage Operations:**
+    - `npm run storage:check`: Verifies configuration, bucket reachability, and privacy without printing secrets.
+    - `npm run storage:setup -- --confirm`: Controlled private bucket creation with explicit `--confirm` flag requirement.
+  - **Bounded Upload Size:** Enforces `PRODUCT_BLOB_MAX_BYTES` (default: 52,428,800 bytes = 50MB); uploads exceeding limits return HTTP 413 `PAYLOAD_TOO_LARGE`.
+  - **Supported Artifact Types:** `screenshot`, `trace`, `har`, `report`, `log`, `scout`, `journey`, `execution`, `anomalies`, `reproduction`, `candidates`, `baseline`, `preflight`, `review-events`.
+  - **Zero Secret Leakage:** Error messages are sanitized via `sanitizeStorageErrorMessage` to redact potential credential tokens or internal URLs.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,426 passed** (50 files) |
+| Browser test suite (`npm run test:browser`) | **193 passed** (14 files) |
+| Build 12D.2A unit tests (`build12d2aSupabaseStorage.test.ts`) | **31 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Storage check (`npm run storage:check`) | exit 0 |
+| Git diff whitespace / syntax check (`git diff --check`) | clean, exit 0 |
+| `.env` staging status | **NOT staged / NOT tracked** |
+| Target network traffic | **Zero external target traffic** |
+| Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
+| External network / AI / Billing | **0** |

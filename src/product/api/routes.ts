@@ -39,7 +39,9 @@ export interface RouteHandlerContext {
   readonly idGenerator?: IdGenerator;
   readonly allowedOrigins?: readonly string[];
   readonly maxRequestBodyBytes?: number;
+  readonly maxArtifactBytes?: number;
 }
+
 
 function resolveCorsHeaders(
   req: IncomingMessage,
@@ -616,25 +618,57 @@ export async function handleProductApiRequest(
     const runArtifactsMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/artifacts$/);
     if (runArtifactsMatch && method === 'POST') {
       const runId = runArtifactsMatch[1]!;
+      const maxArtifactLimit = context.maxArtifactBytes ?? 50 * 1024 * 1024;
       const body = await parseBody<{
         workspaceId?: string;
         type: ArtifactType;
         content: string | Record<string, unknown>;
         contentType?: string;
         encoding?: 'utf8' | 'base64';
-      }>(req);
+      }>(req, maxArtifactLimit);
 
       const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
       if (!workspaceId) {
-        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId, null, corsHeaders);
         return;
       }
       if (!body.type) {
-        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "type".', requestId);
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "type".', requestId, null, corsHeaders);
         return;
       }
+
+      const VALID_ARTIFACT_TYPES: readonly ArtifactType[] = [
+        'screenshot',
+        'trace',
+        'har',
+        'report',
+        'log',
+        'scout',
+        'journey',
+        'execution',
+        'anomalies',
+        'reproduction',
+        'candidates',
+        'baseline',
+        'preflight',
+        'review-events',
+      ];
+
+      if (!VALID_ARTIFACT_TYPES.includes(body.type)) {
+        sendError(
+          res,
+          400,
+          'INVALID_ARTIFACT_TYPE',
+          `Invalid artifact type "${body.type}". Supported: ${VALID_ARTIFACT_TYPES.join(', ')}.`,
+          requestId,
+          null,
+          corsHeaders,
+        );
+        return;
+      }
+
       if (body.content === undefined || body.content === null) {
-        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "content".', requestId);
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "content".', requestId, null, corsHeaders);
         return;
       }
 
@@ -649,6 +683,19 @@ export async function handleProductApiRequest(
         buffer = Buffer.from(String(body.content), 'utf8');
       }
 
+      if (buffer.length > maxArtifactLimit) {
+        sendError(
+          res,
+          413,
+          'PAYLOAD_TOO_LARGE',
+          `Artifact payload exceeds maximum permitted size of ${maxArtifactLimit} bytes.`,
+          requestId,
+          null,
+          corsHeaders,
+        );
+        return;
+      }
+
       const stored = await context.service.storeArtifact(
         {
           workspaceId,
@@ -660,9 +707,10 @@ export async function handleProductApiRequest(
         actorUserId,
       );
 
-      sendJson(res, 201, { success: true, data: stored, requestId }, requestId);
+      sendJson(res, 201, { success: true, data: stored, requestId }, requestId, corsHeaders);
       return;
     }
+
 
     // List run artifacts endpoint: GET /api/v1/runs/:runId/artifacts
     if (runArtifactsMatch && method === 'GET') {

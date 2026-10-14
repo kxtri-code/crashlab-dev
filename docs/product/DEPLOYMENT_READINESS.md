@@ -13,14 +13,16 @@ Before serving traffic in production (`PRODUCT_AUTH_MODE=production`), the appli
 ### Strict Startup Validation Rules
 - **Authentication:** `SUPABASE_JWKS_URL`, `SUPABASE_JWT_ISSUER`, and `SUPABASE_JWT_AUDIENCE` must be present.
 - **Storage:** If `PRODUCT_STORAGE=postgres`, `DATABASE_URL` must be provided.
-- **Blob Storage:** If `PRODUCT_BLOB_STORE=local`, the server will refuse to start in production unless `PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true` is explicitly set.
+- **Blob Storage:**
+  - If `PRODUCT_BLOB_STORE=supabase`: `SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET`, and `SUPABASE_SERVICE_ROLE_KEY` must be present. Bucket privacy is verified via `npm run storage:check`.
+  - If `PRODUCT_BLOB_STORE=local`: The server will refuse to start in production unless `PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true` is explicitly set.
 - **CORS Allowlist:** Wildcard origins (`*`) are prohibited in production mode.
 - **Worker Isolation:** The API server must **not** automatically run a worker queue loop. `PRODUCT_WORKER_ENABLED` must be explicitly configured.
 
 ```text
 Startup Refusal Example:
 [FATAL CONFIG ERROR] Production environment validation failed:
-- Missing required authentication variable: SUPABASE_JWKS_URL
+- Missing required storage variable: SUPABASE_SERVICE_ROLE_KEY
 - Local blob storage is refused in production without explicit PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true override.
 - Production CORS origin cannot be wildcard '*'.
 ```
@@ -98,9 +100,16 @@ CrashLab adheres to strict database operational safety invariants:
   PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true
   ```
 
-### S3-Compatible Object Storage
-- CrashLab includes an architectural adapter boundary for S3-compatible storage (`src/product/storage/s3BlobStore.ts`).
-- **Private Beta Status:** The S3 adapter is designed provider-neutrally (AWS S3, Cloudflare R2, Supabase Storage). Before production release, real cloud credentials and end-to-end integration with live object storage must be configured and tested.
+### Supabase Storage (Build 12D.2A Production Provider)
+- Implemented via `SupabaseBlobStore` (`src/product/blob/supabaseStore.ts`) connecting to Supabase Storage REST API (`/storage/v1`).
+- Enforces private bucket access (`public: false`), SHA-256 integrity checksums, payload length verification, and bounded upload size (`PRODUCT_BLOB_MAX_BYTES`).
+- Fail-closed operational validation via `npm run storage:check`.
+- Safe provisioning via `npm run storage:setup -- --confirm`.
+- See [SUPABASE_STORAGE_SETUP.md](file:///c:/Users/kxtri/Crash-labs/docs/product/SUPABASE_STORAGE_SETUP.md) for full operational manual.
+
+### S3-Compatible Object Storage (Adapter Boundary)
+- CrashLab includes an architectural adapter boundary for S3-compatible storage (`src/product/blob/s3Store.ts`).
+- Designed provider-neutrally for future external object-storage migrations.
 
 ---
 
@@ -143,8 +152,8 @@ An audit of the dashboard frontend bundle confirms:
 ## 8. What Remains Before Public Launch
 
 Before moving from private beta to general public availability, the following milestones remain:
-1. **Live S3 Storage Integration:** Full integration testing against a real S3 / Cloudflare R2 / Supabase Storage bucket with presigned upload/download URLs.
-2. **Server-Sent Events (SSE):** Real-time run progress and queue monitoring via SSE (deferred per build specification).
+1. **Independent Standalone Worker Deployment:** Deploying the worker fleet as dedicated container services separately from the Product API web server.
+2. **Server-Sent Events (SSE):** Real-time run progress and queue monitoring via SSE.
 3. **Self-Service User Provisioning:** Automated user onboarding and organization invitation workflows with Supabase Auth hooks.
 4. **Production Rate Limiting:** Global and per-workspace token bucket rate limiting on public API endpoints.
 5. **Automated Backup & Disaster Recovery:** Continuous database replication and artifact backup verification.

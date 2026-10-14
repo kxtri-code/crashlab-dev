@@ -38,6 +38,8 @@ import { runAuthTokenCommand } from './cli/authTokenCommand.js';
 import { runAuthCheckCommand } from './cli/authCheckCommand.js';
 import { WORKER_USAGE, runWorkerCommand } from './cli/workerCommand.js';
 import { DASHBOARD_USAGE, runDashboardCommand } from './cli/dashboardCommand.js';
+import { runStorageCheckCommand } from './cli/storageCheckCommand.js';
+import { runStorageSetupCommand } from './cli/storageSetupCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -80,6 +82,8 @@ Usage:
   npm run db:migrate
   npm run auth:token -- --user <userId>
   npm run auth:check
+  npm run storage:check
+  npm run storage:setup -- --confirm
   npm run worker [options]
   npm run dashboard [options]
 
@@ -101,6 +105,8 @@ Commands:
   db:migrate     Run schema migrations against PostgreSQL/Supabase (Build 12A)
   auth:token     Generate a signed development bearer token (Build 12B.1)
   auth:check     Verify authentication mode and storage configuration (Build 12B.1)
+  storage:check  Verify artifact storage configuration & bucket reachability (Build 12D.2A)
+  storage:setup  Explicitly initialize private Supabase Storage bucket (Build 12D.2A)
   worker         Run asynchronous background queue worker (Build 12B.2B)
   dashboard      Start local authenticated Product Dashboard (Build 12C.1)
   help           Show this message
@@ -478,6 +484,17 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
       return 0;
     }
     return runDashboardCommand(rest);
+  }
+
+  if (first === 'storage:check') {
+    const res = await runStorageCheckCommand(rest);
+    return res.code;
+  }
+
+
+  if (first === 'storage:setup') {
+    const res = await runStorageSetupCommand(rest);
+    return res.code;
   }
 
   return main([...argv]);

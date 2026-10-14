@@ -374,6 +374,14 @@ List evidence artifacts linked to a test run.
 
 ### 3.10 `POST /api/v1/runs/:runId/artifacts`
 Upload and store a physical artifact blob and persist its database metadata record.
+
+#### Supported Artifact Types:
+`screenshot`, `trace`, `har`, `report`, `log`, `scout`, `journey`, `execution`, `anomalies`, `reproduction`, `candidates`, `baseline`, `preflight`, `review-events`.
+Unsupported types are rejected with HTTP 400 `INVALID_ARTIFACT_TYPE`.
+
+#### Payload Size Limits:
+Uploads are bounded by `PRODUCT_BLOB_MAX_BYTES` (default: 52,428,800 bytes = 50MB). Requests exceeding this limit return HTTP 413 `PAYLOAD_TOO_LARGE`.
+
 - **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
 - **Request Body:**
   ```json
@@ -384,6 +392,7 @@ Upload and store a physical artifact blob and persist its database metadata reco
     "contentType": "application/json"
   }
   ```
+  *(For binary artifacts such as screenshots, pass `"encoding": "base64"` and the base64-encoded string in `"content"`)*
 - **Response:** `201 Created` with stored artifact metadata and blob info.
 
 ### 3.11 `GET /api/v1/artifacts/:artifactId?workspaceId=:workspaceId`
@@ -392,6 +401,11 @@ Retrieve metadata for a specific artifact.
 
 ### 3.12 `GET /api/v1/artifacts/:artifactId/content?workspaceId=:workspaceId`
 Download the raw artifact binary or text content.
+
+#### Security & Access Control:
+- Requires valid production JWT, workspace membership, and RBAC authorization.
+- Cross-workspace downloads return HTTP 403 `FORBIDDEN`.
+- Downloaded content is streamed directly through the Product API server; provider credentials, private bucket URLs, and filesystem paths are never returned.
 - **Headers Returned:**
   - `Content-Type`: mime type of the artifact
   - `Content-Length`: payload size in bytes

@@ -214,3 +214,25 @@ Before any run is created in storage or committed to the PostgreSQL queue, the s
 - **CORS Allowlist:** Production CORS enforces explicit domain whitelists and forbids wildcard `*` origins.
 - **Storage Safety:** Production mode refuses local filesystem blob storage without explicit private-beta confirmation.
 - **Safe Probes:** `/health` and `/readiness` endpoints expose zero credentials while providing reliable liveness and database connectivity checks.
+
+---
+
+## 9. Private Supabase Artifact Storage Boundary (Build 12D.2A)
+
+### 9.1 Private Bucket Enforcement
+- **`public: false` Mandate:** CrashLab strictly requires artifact buckets to have public read access disabled.
+- **Preflight & Runtime Validation:** Both `npm run storage:check` and the `SupabaseBlobStore` adapter reject public buckets immediately.
+
+### 9.2 Server-Only Service-Role Secrets
+- **Confidential Credentials:** `SUPABASE_SERVICE_ROLE_KEY` is maintained exclusively in server environment configurations.
+- **Zero Exposure:** Never bundled into dashboard JavaScript, never returned in API payloads, never written to audit trails, and never included in error stack traces.
+
+### 9.3 Proxied, Authenticated Download Architecture
+- **Zero Browser-Direct Access:** Client browsers never communicate directly with Supabase Storage.
+- **Strict Authorization:** Downloads via `GET /api/v1/artifacts/:artifactId/content` require valid production JWTs, verified workspace membership, and RBAC authorization.
+- **Content Streaming:** The Product API streams artifact content to authorized clients with verified `Content-Type`, `Content-Length`, `ETag`, and `X-Artifact-Sha256` headers.
+
+### 9.4 Integrity, Immutability & Atomic Cleanup
+- **Integrity Verification:** Every upload verifies both payload byte length and cryptographic SHA-256 hash against the calculated digest.
+- **Immutability Invariant:** Overwrites with differing content are rejected (`ArtifactImmutableConflictError`). Identical uploads succeed idempotently.
+- **Atomic Cleanup on DB Failure:** If writing metadata to PostgreSQL fails after object upload, the newly uploaded object is immediately deleted from Supabase Storage to prevent orphaned data.

@@ -12,8 +12,9 @@ import type { BlobStore } from './interfaces.js';
 import { BlobStorageError } from './interfaces.js';
 import { LocalBlobStore } from './localStore.js';
 import { S3CompatibleBlobStore, type S3ClientLike } from './s3Store.js';
+import { SupabaseBlobStore, DEFAULT_MAX_BLOB_BYTES } from './supabaseStore.js';
 
-export type BlobStoreProvider = 'local' | 's3';
+export type BlobStoreProvider = 'local' | 's3' | 'supabase';
 
 export interface BlobStoreConfig {
   readonly provider: BlobStoreProvider;
@@ -21,21 +22,39 @@ export interface BlobStoreConfig {
   readonly s3Bucket?: string;
   readonly s3Prefix?: string;
   readonly s3Client?: S3ClientLike;
+  readonly supabaseUrl?: string;
+  readonly supabaseBucket?: string;
+  readonly supabaseServiceRoleKey?: string;
+  readonly maxByteLength?: number;
+  readonly fetchFn?: typeof fetch;
 }
 
 export function loadBlobStoreConfigFromEnv(): BlobStoreConfig {
   const rawProvider = (process.env.PRODUCT_BLOB_STORE ?? 'local').toLowerCase().trim();
-  const provider: BlobStoreProvider = rawProvider === 's3' ? 's3' : 'local';
+  let provider: BlobStoreProvider = 'local';
+  if (rawProvider === 's3') {
+    provider = 's3';
+  } else if (rawProvider === 'supabase') {
+    provider = 'supabase';
+  }
 
   const localRoot = process.env.PRODUCT_BLOB_ROOT
     ? path.resolve(process.env.PRODUCT_BLOB_ROOT.trim())
     : path.resolve(process.cwd(), '.artifacts');
+
+  const maxBytes = process.env.PRODUCT_BLOB_MAX_BYTES
+    ? Number.parseInt(process.env.PRODUCT_BLOB_MAX_BYTES.trim(), 10)
+    : DEFAULT_MAX_BLOB_BYTES;
 
   return {
     provider,
     localRoot,
     s3Bucket: process.env.PRODUCT_BLOB_S3_BUCKET?.trim(),
     s3Prefix: process.env.PRODUCT_BLOB_S3_PREFIX?.trim(),
+    supabaseUrl: process.env.SUPABASE_URL?.trim(),
+    supabaseBucket: process.env.SUPABASE_STORAGE_BUCKET?.trim() || 'crashlab-artifacts',
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(),
+    maxByteLength: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : DEFAULT_MAX_BLOB_BYTES,
   };
 }
 
@@ -79,5 +98,29 @@ export function resolveBlobStore(options?: ResolveBlobStoreOptions): BlobStore {
     });
   }
 
-  throw new BlobStorageError(`Unsupported blob store provider "${provider}". Supported: 'local', 's3'.`);
+  if (provider === 'supabase') {
+    const supabaseUrl = options?.config?.supabaseUrl ?? envConfig.supabaseUrl;
+    const bucket = options?.config?.supabaseBucket ?? envConfig.supabaseBucket;
+    const serviceRoleKey = options?.config?.supabaseServiceRoleKey ?? envConfig.supabaseServiceRoleKey;
+
+    if (!supabaseUrl) {
+      throw new BlobStorageError('PRODUCT_BLOB_STORE=supabase is configured, but SUPABASE_URL is missing.');
+    }
+    if (!bucket) {
+      throw new BlobStorageError('PRODUCT_BLOB_STORE=supabase is configured, but SUPABASE_STORAGE_BUCKET is missing.');
+    }
+    if (!serviceRoleKey) {
+      throw new BlobStorageError('PRODUCT_BLOB_STORE=supabase is configured, but SUPABASE_SERVICE_ROLE_KEY is missing.');
+    }
+
+    return new SupabaseBlobStore({
+      supabaseUrl,
+      bucket,
+      serviceRoleKey,
+      maxByteLength: options?.config?.maxByteLength ?? envConfig.maxByteLength,
+      fetchFn: options?.config?.fetchFn,
+    });
+  }
+
+  throw new BlobStorageError(`Unsupported blob store provider "${provider}". Supported: 'local', 's3', 'supabase'.`);
 }

@@ -19,7 +19,7 @@ export interface ProductionEnvironmentValidationResult {
 export interface DeploymentConfig {
   readonly authMode: 'development' | 'production';
   readonly storage: 'in-memory' | 'postgres';
-  readonly blobStore: 'local' | 's3-compatible';
+  readonly blobStore: 'local' | 's3-compatible' | 'supabase';
   readonly blobAllowLocalInProduction: boolean;
   readonly workerEnabled: boolean;
   readonly workerId: string;
@@ -29,6 +29,31 @@ export interface DeploymentConfig {
 }
 
 export const DEFAULT_MAX_REQUEST_BODY_BYTES = 1024 * 1024; // 1MB bounded limit
+
+/**
+ * Validates Supabase Storage configuration variables.
+ * Reports missing variable names ONLY — NEVER outputs values.
+ */
+export function validateSupabaseStorageConfig(
+  env: Record<string, string | undefined> = process.env,
+): { valid: boolean; missingVariables: readonly string[] } {
+  const missing: string[] = [];
+
+  if (!env.SUPABASE_URL?.trim()) {
+    missing.push('SUPABASE_URL');
+  }
+  if (!env.SUPABASE_STORAGE_BUCKET?.trim()) {
+    missing.push('SUPABASE_STORAGE_BUCKET');
+  }
+  if (!env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    missing.push('SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  return {
+    valid: missing.length === 0,
+    missingVariables: Object.freeze(missing),
+  };
+}
 
 /**
  * Validates environment variables for production beta deployment.
@@ -65,10 +90,25 @@ export function validateProductionEnvironment(
     const allowLocal =
       env.PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION?.trim().toLowerCase() === 'true';
 
-    if (blobStore === 'local' && !allowLocal) {
-      errors.push(
-        'Local filesystem blob storage is refused in production mode without explicit PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true override.',
-      );
+    if (blobStore === 'supabase') {
+      const storageValidation = validateSupabaseStorageConfig(env);
+      if (!storageValidation.valid) {
+        for (const missing of storageValidation.missingVariables) {
+          errors.push(`Missing required production storage variable: ${missing}`);
+        }
+      }
+    } else if (blobStore === 'local') {
+      if (!allowLocal) {
+        errors.push(
+          'Local filesystem blob storage is refused in production mode without explicit PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION=true override.',
+        );
+      }
+    } else if (blobStore === 's3' || blobStore === 's3-compatible') {
+      if (!env.PRODUCT_BLOB_S3_BUCKET?.trim()) {
+        errors.push('PRODUCT_BLOB_S3_BUCKET is required when PRODUCT_BLOB_STORE=s3.');
+      }
+    } else {
+      errors.push(`Unsupported PRODUCT_BLOB_STORE "${blobStore}" in production. Supported: "supabase", "local" (with override), "s3".`);
     }
 
     // 4. CORS Allowed Origins
@@ -105,7 +145,12 @@ export function loadDeploymentConfigFromEnv(
   const storage = rawStorage === 'postgres' ? 'postgres' : 'in-memory';
 
   const rawBlob = env.PRODUCT_BLOB_STORE?.trim().toLowerCase();
-  const blobStore = rawBlob === 's3-compatible' ? 's3-compatible' : 'local';
+  let blobStore: 'local' | 's3-compatible' | 'supabase' = 'local';
+  if (rawBlob === 'supabase') {
+    blobStore = 'supabase';
+  } else if (rawBlob === 's3' || rawBlob === 's3-compatible') {
+    blobStore = 's3-compatible';
+  }
 
   const blobAllowLocalInProduction =
     env.PRODUCT_BLOB_ALLOW_LOCAL_IN_PRODUCTION?.trim().toLowerCase() === 'true';

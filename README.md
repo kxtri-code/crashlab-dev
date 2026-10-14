@@ -62,6 +62,10 @@ This repository contains five builds, with two integration milestones layered on
   interactive single-page web client connecting to the Product API with in-memory local dev authentication, multi-tenant workspace/project navigation, real-time lifecycle & queue status, candidate triage with `confirmedBug: false` invariant, safe artifact previews/downloads, visibility-aware polling, and bounded idempotent cancellation.
 - **Build 12C.2 — Preflight-Gated Journey Execution from the Dashboard**:
   authenticated dashboard flow for selecting approved journeys, inspecting safe execution specs in a dedicated modal, and dispatching execution runs through the preflight safety gate. Zero browser launches or target requests on refusal, strict ID-only API contract, live run monitoring, bounded cancellation, and candidate terminology alignment (`accepted` review status replacing `confirmed`; invariants `confirmedBug: false` and `confirmed: false` preserved permanently).
+- **Build 12D.1 — Production Authentication & Deployment Readiness** (`npm run auth:check`):
+  asymmetric Supabase OIDC/JWT verification via JWKS, strict environment startup validation, container health and readiness probes (`/health`, `/readiness`), request body limits (HTTP 413), production CORS origin whitelisting, and fail-closed secret protection.
+- **Build 12D.2A — Private Supabase Storage for Production Artifacts** (`npm run storage:check`, `npm run storage:setup`):
+  real cloud object-storage provider for production test artifacts (screenshots, traces, HAR files, logs, reports) using Supabase Storage REST API with private-bucket enforcement (`public: false`), server-only service credentials, SHA-256 integrity verification, bounded upload sizes, authenticated streaming downloads, and atomic cleanup on metadata failure.
 
 Each build is a separate artifact, and no build rewrites another's:
 
