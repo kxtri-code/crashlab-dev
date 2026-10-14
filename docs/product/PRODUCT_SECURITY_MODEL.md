@@ -156,3 +156,36 @@ Every state change or administrative action generates an immutable `AuditEvent`:
 - Artifact files (screenshots, traces, logs) require authenticated API requests with verified workspace membership.
 - Server filesystem storage paths (`storagePath`) are redacted or sanitized; no physical operating system paths are exposed to the client.
 - Downloaded artifacts cannot execute inside the application origin.
+
+---
+
+## 7. Preflight-Gated Run Dispatch & Journey Immutability (Build 12C.2)
+
+### 7.1 Immutability of Approved Journeys
+CrashLab strictly forbids dashboard users from modifying or injecting journey actions, steps, selectors, locators, target URLs, or credentials during run dispatch:
+1. **IDs-Only Contract:** The dispatch endpoint (`POST /api/v1/runs`) accepts references to trusted, pre-approved entity IDs only (`workspaceId`, `projectId`, `targetEnvironmentId`, `journeyId`).
+2. **Rejection of Client Overrides:** Any request payload containing `targetUrl`, `actions`, `steps`, `locators`, `credentials`, `password`, `payment`, `safeTestMode`, or `authorizationReference` is immediately rejected with HTTP `400 BAD_REQUEST`.
+3. **No Arbitrary Script Injection:** Test journeys must pass formal human QA review (`approveJourney`) before they can ever be dispatched. An operator cannot use the dashboard to craft arbitrary web requests or bypass origin boundaries.
+
+### 7.2 Preflight Safety Gate Boundary
+Before any run is created in storage or committed to the PostgreSQL queue, the server runs the proven Build 10.2 safety preflight gate:
+- **Refusal Conditions:**
+  - Production-like environment keywords (`production`, `prod`, `live`)
+  - Target URL missing or invalid scheme
+  - Non-local host in local environment or HTTP protocol in staging
+  - Origin outside the target's explicit `allowedOrigins` whitelist
+  - Forbidden actions (payment, checkout, balance adjustments, password resets, account deletion)
+  - Missing safe test data reference when credentials/test data are required
+  - Disabled safe-test mode
+  - Malformed or schema-invalid journey definitions
+  - Target/project or journey/target ownership mismatches
+- **Preflight Refusal Semantics:**
+  - Refused requests return HTTP `422 Unprocessable Entity` with error code `PREFLIGHT_BLOCKED`.
+  - Zero run records and zero queue items are committed to PostgreSQL.
+  - Exactly **zero browser instances** are launched.
+  - Exactly **zero network requests** are sent to the target environment.
+  - The security audit log records an immutable `run.preflight_blocked` event with failure reasons.
+
+### 7.3 Candidate Findings & Trust Invariants
+- **Non-Negotiable Invariants:** `confirmed: false` and `confirmedBug: false` remain permanent across all dashboard screens, database tables, and API contracts.
+- **Human Acceptance vs Bug Confirmation:** The candidate status `accepted` means an authorized engineer has acknowledged the candidate lead for tracking or triage. It does **not** mean the bug is automatically confirmed. The dashboard strictly prohibits displaying or using `confirmed` as a defect status.

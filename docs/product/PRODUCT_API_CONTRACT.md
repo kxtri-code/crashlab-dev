@@ -172,8 +172,67 @@ List test runs for a project.
   }
   ```
 
-### 3.8 `POST /api/v1/runs`
-Create and enqueue a new test run for asynchronous worker execution.
+### 3.8 `GET /api/v1/projects/:projectId/journeys?workspaceId=:workspaceId`
+List approved journeys across all configured targets of a project.
+- **Headers:** `Authorization: Bearer <token>`
+- **Response:** `200 OK`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "journeys": [
+        {
+          "id": "jny_catalog01",
+          "schemaVersion": "1.0",
+          "workspaceId": "ws_acme01",
+          "projectId": "prj_shop01",
+          "targetEnvironmentId": "tgt_staging01",
+          "goal": "Browse catalog and filter products",
+          "origin": "https://staging.acme.internal",
+          "allowedActions": ["click", "type"],
+          "forbiddenActions": ["checkout", "payment"],
+          "requiresCredentials": false,
+          "requiresTestData": false,
+          "createdAt": "2026-10-12T00:00:00.000Z",
+          "updatedAt": "2026-10-12T00:00:00.000Z"
+        }
+      ]
+    },
+    "requestId": "req_..."
+  }
+  ```
+
+### 3.9 `GET /api/v1/journeys/:journeyId?workspaceId=:workspaceId`
+Retrieve a single approved journey by ID.
+- **Headers:** `Authorization: Bearer <token>`
+- **Response:** `200 OK`
+
+### 3.10 `POST /api/v1/runs`
+Create and enqueue a new test run for asynchronous worker execution after strict server-side preflight gate verification.
+
+#### Strict Security & Input Policy (IDs Only):
+The client request MUST reference pre-approved entity IDs only. The server resolves all target URLs, origins, and journey definitions from trusted backend storage.
+Client attempts to supply any of the following fields are strictly rejected with `400 BAD_REQUEST`:
+- `targetUrl`, `rawTargetUrl`, `url`
+- `allowedOrigins`, `allowedOrigin`, `origin`
+- `actions`, `steps`, `locators`
+- `credentials`, `password`, `token`, `secret`
+- `payment`
+- `safeTestMode`, `safeTest`
+- `authorizationReference`
+
+#### Preflight-Gated Execution Semantics:
+Before a run is created or enqueued into the PostgreSQL queue, the server runs the proven Build 10.2 preflight safety validator against the stored target and journey:
+- If preflight fails (e.g. production-like target, origin mismatch, forbidden actions, missing test data, disabled safe-test mode):
+  - Returns `422 Unprocessable Entity` with error code `PREFLIGHT_BLOCKED`.
+  - Details payload includes `failureReasons: string[]` and `status: "blocked"`.
+  - Records an immutable security audit event `run.preflight_blocked`.
+  - Creates **zero** runs in storage, **zero** queue items, launches **zero** browser processes, and issues **zero** network requests to the target.
+- If preflight passes:
+  - Creates a TestRun record with status `queued` and `safeTestMode: true`.
+  - Enqueues an atomic `RunQueueItem` in PostgreSQL with `queue_status = 'queued'`.
+  - Returns `201 Created` with run payload and `requestId`.
+
 - **Headers:** `Authorization: Bearer <token>`, `Content-Type: application/json`
 - **Request Body:**
   ```json
@@ -185,7 +244,7 @@ Create and enqueue a new test run for asynchronous worker execution.
     "maxAttempts": 2
   }
   ```
-- **Response:** `201 Created`
+- **Response (Success - 201 Created):**
   ```json
   {
     "success": true,
@@ -197,12 +256,30 @@ Create and enqueue a new test run for asynchronous worker execution.
       "safeTestMode": true,
       "preflightStatus": "pending"
     },
-    "requestId": "req_..."
+    "requestId": "req_0123456789abcdef"
+  }
+  ```
+- **Response (Preflight Refusal - 422 Unprocessable Entity):**
+  ```json
+  {
+    "success": false,
+    "error": {
+      "code": "PREFLIGHT_BLOCKED",
+      "message": "Action 'checkout' violates non-destructive safety policy.",
+      "details": {
+        "failureReasons": [
+          "Action 'checkout' violates non-destructive safety policy."
+        ],
+        "status": "blocked"
+      }
+    },
+    "requestId": "req_0123456789abcdef"
   }
   ```
 
-### 3.9 `GET /api/v1/runs/:runId?workspaceId=:workspaceId`
+### 3.11 `GET /api/v1/runs/:runId?workspaceId=:workspaceId`
 Get single run details and lifecycle status.
+- **Response:** `200 OK`
 - **Response:** `200 OK`
 
 ### 3.10 `POST /api/v1/runs/:runId/cancel`

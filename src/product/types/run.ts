@@ -73,4 +73,5 @@ export interface CreateTestRunInput {
   readonly journeyId: string;
   readonly maxAttempts?: number;
   readonly requestId?: string;
+  readonly validatePreflight?: boolean;
 }

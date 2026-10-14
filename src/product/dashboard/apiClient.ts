@@ -56,6 +56,16 @@ export class NotFoundError extends ApiError {
   }
 }
 
+export class PreflightBlockedError extends ApiError {
+  readonly failureReasons: readonly string[];
+
+  constructor(message = 'Execution refused by safety preflight gate.', failureReasons: readonly string[] = [], requestId?: string) {
+    super(422, 'PREFLIGHT_BLOCKED', message, requestId);
+    this.name = 'PreflightBlockedError';
+    this.failureReasons = failureReasons;
+  }
+}
+
 export interface ProductApiClientOptions {
   readonly baseUrl: string;
   readonly token?: string | (() => string | null);
@@ -137,9 +147,10 @@ export class ProductApiClient {
       if (!res.ok) {
         let code = 'ERROR';
         let message = `HTTP ${res.status} ${res.statusText}`;
+        let errJson: any = null;
 
         try {
-          const errJson = (await res.json()) as any;
+          errJson = (await res.json()) as any;
           if (errJson && errJson.error) {
             code = errJson.error.code || code;
             message = errJson.error.message || message;
@@ -154,6 +165,10 @@ export class ProductApiClient {
         }
         if (res.status === 404) {
           throw new NotFoundError(message, requestId);
+        }
+        if (res.status === 422 || code === 'PREFLIGHT_BLOCKED') {
+          const reasons = errJson?.error?.details?.failureReasons ?? [];
+          throw new PreflightBlockedError(message, reasons, requestId);
         }
 
         throw new ApiError(res.status, code, message, requestId);
@@ -200,6 +215,31 @@ export class ProductApiClient {
     return this.request<{ journeys: readonly ProductApprovedJourney[] }>(
       `/api/v1/targets/${encodeURIComponent(targetId)}/journeys?workspaceId=${encodeURIComponent(workspaceId)}`,
     );
+  }
+
+  async listProjectJourneys(workspaceId: string, projectId: string): Promise<ApiResponseWithMeta<{ journeys: readonly ProductApprovedJourney[] }>> {
+    return this.request<{ journeys: readonly ProductApprovedJourney[] }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/journeys?workspaceId=${encodeURIComponent(workspaceId)}`,
+    );
+  }
+
+  async getJourney(workspaceId: string, journeyId: string): Promise<ApiResponseWithMeta<ProductApprovedJourney>> {
+    return this.request<ProductApprovedJourney>(
+      `/api/v1/journeys/${encodeURIComponent(journeyId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+    );
+  }
+
+  async createRun(input: {
+    workspaceId: string;
+    projectId: string;
+    targetEnvironmentId: string;
+    journeyId: string;
+    maxAttempts?: number;
+  }): Promise<ApiResponseWithMeta<TestRun>> {
+    return this.request<TestRun>('/api/v1/runs', {
+      method: 'POST',
+      body: input,
+    });
   }
 
   async listRuns(workspaceId: string, projectId: string): Promise<ApiResponseWithMeta<{ runs: readonly TestRun[] }>> {

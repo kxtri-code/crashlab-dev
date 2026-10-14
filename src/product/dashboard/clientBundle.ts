@@ -48,6 +48,13 @@ export const CLIENT_JS_BUNDLE: string = `
     selectedArtifactLoading: false,
     cancelModalOpen: false,
     cancelSubmitting: false,
+    executionModalOpen: false,
+    executionModalJourney: null,
+    executionModalTarget: null,
+    executionModalAgreed: false,
+    executionSubmitting: false,
+    executionError: null,
+    executionFailureReasons: [],
     loading: false,
     error: null,
     lastRequestId: null,
@@ -102,13 +109,22 @@ export const CLIENT_JS_BUNDLE: string = `
 
       if (!res.ok) {
         let errMessage = \`HTTP \${res.status} \${res.statusText}\`;
+        let code = 'ERROR';
+        let details = null;
         try {
           const errData = await res.json();
-          if (errData && errData.error && errData.error.message) {
-            errMessage = errData.error.message;
+          if (errData && errData.error) {
+            if (errData.error.message) errMessage = errData.error.message;
+            if (errData.error.code) code = errData.error.code;
+            if (errData.error.details) details = errData.error.details;
           }
         } catch (_) {}
-        throw new Error(errMessage);
+        const err = new Error(errMessage);
+        err.status = res.status;
+        err.code = code;
+        err.details = details;
+        err.failureReasons = details && Array.isArray(details.failureReasons) ? details.failureReasons : [];
+        throw err;
       }
 
       return res;
@@ -310,13 +326,15 @@ export const CLIENT_JS_BUNDLE: string = `
         }
 
         if (path === 'projects' && id) {
-          const [pRes, tRes, rRes] = await Promise.all([
+          const [pRes, tRes, jRes, rRes] = await Promise.all([
             api.getJson(\`/api/v1/projects/\${id}?workspaceId=\${wsId}\`),
             api.getJson(\`/api/v1/projects/\${id}/targets?workspaceId=\${wsId}\`),
+            api.getJson(\`/api/v1/projects/\${id}/journeys?workspaceId=\${wsId}\`).catch(() => ({ success: true, data: { journeys: [] } })),
             api.getJson(\`/api/v1/projects/\${id}/runs?workspaceId=\${wsId}\`),
           ]);
           if (pRes.success) state.selectedProject = pRes.data;
           if (tRes.success) state.targets = tRes.data.targets || [];
+          if (jRes.success) state.journeys = jRes.data.journeys || [];
           if (rRes.success) state.runs = rRes.data.runs || [];
         }
 
@@ -470,10 +488,11 @@ export const CLIENT_JS_BUNDLE: string = `
       <div class="trust-banner">
         <div class="trust-banner-text">
           <span class="trust-banner-badge">TRUST INVARIANT</span>
-          <span><strong>Safe-Test Mode Active</strong> &bull; Non-destructive only &bull; Financial & destructive actions permanently blocked.</span>
+          <span><strong>Safe-Test Mode Active</strong> &bull; Candidate finding — not a confirmed defect &bull; Financial &amp; destructive actions permanently blocked.</span>
         </div>
-        <div style="font-size:0.75rem;color:var(--text-dim);">
+        <div style="font-size:0.75rem;color:var(--text-dim);display:flex;gap:0.75rem;">
           <code>confirmedBug: false</code>
+          <code>confirmed: false</code>
         </div>
       </div>
     \`;
@@ -518,6 +537,18 @@ export const CLIENT_JS_BUNDLE: string = `
     const isPulsing = s === 'running' || s === 'preflight';
     const pulseHtml = isPulsing ? '<span class="pulse-dot"></span>' : '';
     return \`<span class="status-pill \${escapeHtml(s)}">\${pulseHtml}\${escapeHtml(s)}</span>\`;
+  }
+
+  function renderReviewStatusPill(status) {
+    let s = String(status || 'unreviewed').toLowerCase().trim();
+    if (s === 'confirmed' || s === 'confirmed_bug') {
+      s = 'accepted';
+    }
+    const valid = ['open', 'investigating', 'accepted', 'dismissed', 'duplicate', 'resolved', 'unreviewed'];
+    if (!valid.includes(s)) {
+      s = 'unreviewed';
+    }
+    return \`<span class="review-status-pill \${escapeHtml(s)}">\${escapeHtml(s)}</span>\`;
   }
 
   function renderOverviewView() {
@@ -590,6 +621,44 @@ export const CLIENT_JS_BUNDLE: string = `
       </div>
     \`).join('');
 
+    const journeyCards = state.journeys.map(j => {
+      const tgt = state.targets.find(t => t.id === j.targetEnvironmentId) || state.targets[0];
+      const hasTestData = Boolean(tgt && tgt.testDataReference);
+      const testDataLabel = (j.requiresTestData || j.requiresCredentials)
+        ? (hasTestData ? '<span style="color:#38bdf8;">&bull; Protected test data configured</span>' : '<span style="color:#f59e0b;">&bull; Protected test data missing</span>')
+        : '<span style="color:var(--text-dim);">&bull; No credentials required</span>';
+
+      return \`
+        <div class="journey-card" style="background:var(--bg-surface-elevated);border:1px solid var(--border-subtle);border-radius:8px;padding:1rem;margin-bottom:0.75rem;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.4rem;">
+            <div>
+              <span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid #10b981;font-size:0.7rem;margin-right:0.5rem;">Approved journey</span>
+              <span style="font-size:0.75rem;color:var(--text-dim);font-family:var(--font-mono);">ID: \${escapeHtml(j.id)}</span>
+            </div>
+            <span class="status-pill \${tgt && tgt.environment === 'staging' ? 'preflight' : 'created'}">\${escapeHtml(tgt ? tgt.environment : 'isolated')}</span>
+          </div>
+          <div style="font-weight:600;font-size:0.95rem;margin-bottom:0.35rem;color:var(--text-main);">
+            \${escapeHtml(j.goal)}
+          </div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;">
+            Target Origin: <code style="color:#38bdf8;">\${escapeHtml(j.origin)}</code>
+          </div>
+          <div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:0.75rem;line-height:1.4;">
+            <strong>Allowed Actions:</strong> \${escapeHtml(j.allowedActions.join(', '))}
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+            <div style="font-size:0.75rem;">
+              <span style="color:#10b981;margin-right:0.75rem;">&bull; Safe-Test Mode: Enabled</span>
+              \${testDataLabel}
+            </div>
+            <button class="btn btn-primary btn-sm btn-open-run-modal" data-journey-id="\${escapeHtml(j.id)}" id="btn-run-journey-\${escapeHtml(j.id)}">
+              Run journey &rarr;
+            </button>
+          </div>
+        </div>
+      \`;
+    }).join('');
+
     const runRows = state.runs.map(r => \`
       <tr>
         <td><a href="#/run-detail/\${escapeHtml(r.id)}" style="color:var(--text-main);font-family:var(--font-mono);font-size:0.8rem;">\${escapeHtml(r.id.slice(0, 14))}...</a></td>
@@ -599,6 +668,93 @@ export const CLIENT_JS_BUNDLE: string = `
         <td><a href="#/run-detail/\${escapeHtml(r.id)}" class="btn btn-secondary btn-sm">Details &rarr;</a></td>
       </tr>
     \`).join('');
+
+    // Execution modal renderer
+    const executionModal = state.executionModalOpen && state.executionModalJourney && state.executionModalTarget ? \`
+      <div class="modal-overlay" id="modal-run-execution">
+        <div class="modal-card modal-card-lg">
+          <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Dispatch Approved Journey</span>
+            <span class="badge" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid #10b981;font-size:0.7rem;">Approved journey</span>
+          </div>
+          <div class="modal-body">
+            \${state.executionError ? \`
+              <div class="preflight-error-banner" id="preflight-error-banner">
+                <strong>Preflight Refusal:</strong> \${escapeHtml(state.executionError)}
+                \${state.executionFailureReasons && state.executionFailureReasons.length > 0 ? \`
+                  <ul>
+                    \${state.executionFailureReasons.map(re => \`<li>\${escapeHtml(re)}</li>\`).join('')}
+                  </ul>
+                \` : ''}
+                <div style="margin-top:0.5rem;font-size:0.75rem;color:#fca5a5;">
+                  Zero browser processes launched. Zero network requests issued to target.
+                </div>
+              </div>
+            \` : ''}
+
+            <div class="execution-warning-box">
+              <strong>Preflight Safety Notice:</strong> The server runs the safety preflight gate before any browser launch. Production environments, payment operations, unapproved origins, and unsafe actions are unconditionally blocked.
+            </div>
+
+            <div class="execution-spec-list">
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Target Environment</span>
+                <span class="execution-spec-value">\${escapeHtml(state.executionModalTarget.environment)}</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Target URL Origin</span>
+                <span class="execution-spec-value">\${escapeHtml(state.executionModalJourney.origin)}</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Journey Goal</span>
+                <span class="execution-spec-value" style="font-family:var(--font-sans);text-align:right;">\${escapeHtml(state.executionModalJourney.goal)}</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Safe-Test Mode</span>
+                <span class="execution-spec-value" style="color:#10b981;">Enabled (Mandatory)</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Expected Actions</span>
+                <span class="execution-spec-value">\${escapeHtml(state.executionModalJourney.allowedActions.join(', '))}</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Prohibited Actions</span>
+                <span class="execution-spec-value" style="color:#fca5a5;">\${escapeHtml((state.executionModalJourney.forbiddenActions && state.executionModalJourney.forbiddenActions.length > 0 ? state.executionModalJourney.forbiddenActions : ['payment', 'checkout', 'modify_credentials', 'delete_account']).join(', '))}</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Test Data Status</span>
+                <span class="execution-spec-value">\${
+                  (state.executionModalJourney.requiresTestData || state.executionModalJourney.requiresCredentials)
+                    ? (state.executionModalTarget.testDataReference ? 'Protected test data configured' : 'Protected test data missing')
+                    : 'Protected test data not required'
+                }</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Expected Browser Activity</span>
+                <span class="execution-spec-value" style="font-family:var(--font-sans);">Isolated headless Chromium via worker queue</span>
+              </div>
+              <div class="execution-spec-item">
+                <span class="execution-spec-label">Artifact Behavior</span>
+                <span class="execution-spec-value" style="font-family:var(--font-sans);">Captures screenshots, logs, and trace evidence</span>
+              </div>
+            </div>
+
+            <div class="confirmation-checkbox-group">
+              <input type="checkbox" id="check-confirm-run" \${state.executionModalAgreed ? 'checked' : ''}>
+              <label for="check-confirm-run">
+                I explicitly confirm dispatching this approved journey against the designated non-production target origin under safe-test constraints.
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-cancel-run-modal" class="btn btn-secondary">Cancel</button>
+            <button id="btn-confirm-run" class="btn btn-primary" \${(!state.executionModalAgreed || state.executionSubmitting) ? 'disabled' : ''}>
+              \${state.executionSubmitting ? 'Enqueuing...' : 'Run journey'}
+            </button>
+          </div>
+        </div>
+      </div>
+    \` : '';
 
     return \`
       <div class="panel-header">
@@ -616,6 +772,13 @@ export const CLIENT_JS_BUNDLE: string = `
           </div>
         </div>
         <div>
+          <div class="panel">
+            <div class="panel-header">
+              <h2 class="panel-title" style="font-size:1rem;">Approved Journeys</h2>
+            </div>
+            \${journeyCards || '<p style="color:var(--text-dim);font-size:0.85rem;padding:1rem;text-align:center;">No approved journeys found for this project.</p>'}
+          </div>
+
           <div class="panel">
             <div class="panel-header">
               <h2 class="panel-title" style="font-size:1rem;">Recent Test Runs</h2>
@@ -639,6 +802,7 @@ export const CLIENT_JS_BUNDLE: string = `
           </div>
         </div>
       </div>
+      \${executionModal}
     \`;
   }
 
@@ -649,7 +813,7 @@ export const CLIENT_JS_BUNDLE: string = `
     }
 
     const q = state.selectedQueueItem;
-    const isCancellable = ['queued', 'running'].includes(run.status);
+    const isCancellable = ['queued', 'preflight', 'running', 'cancelling'].includes(run.status);
 
     const candRows = state.candidates.map(c => \`
       <tr>
@@ -657,7 +821,7 @@ export const CLIENT_JS_BUNDLE: string = `
         <td><code>\${escapeHtml(c.ruleId || 'N/A')}</code></td>
         <td><span style="font-weight:600;color:#fca5a5;">\${escapeHtml(c.classification)}</span></td>
         <td>\${c.reproduced ? '<span style="color:#f59e0b;">Yes (Signal recurs)</span>' : 'No'}</td>
-        <td><span class="status-pill \${c.reviewStatus === 'unreviewed' ? 'created' : 'completed'}">\${escapeHtml(c.reviewStatus)}</span></td>
+        <td>\${renderReviewStatusPill(c.reviewStatus)}</td>
       </tr>
     \`).join('');
 
@@ -714,6 +878,27 @@ export const CLIENT_JS_BUNDLE: string = `
         </div>
       </div>
 
+      <!-- Extended Run Monitor Specs -->
+      <div class="panel" style="margin-top:1.5rem;">
+        <div class="panel-header">
+          <h2 class="panel-title" style="font-size:1rem;">Run Execution Details</h2>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:1rem;font-size:0.85rem;">
+          <div><strong style="color:var(--text-dim);">Run ID:</strong> <code style="font-size:0.78rem;">\${escapeHtml(run.id)}</code></div>
+          <div><strong style="color:var(--text-dim);">Request ID:</strong> <code style="font-size:0.78rem;">\${escapeHtml(run.requestId || state.lastRequestId || 'N/A')}</code></div>
+          <div><strong style="color:var(--text-dim);">Project ID:</strong> <code style="font-size:0.78rem;">\${escapeHtml(run.projectId)}</code></div>
+          <div><strong style="color:var(--text-dim);">Target Environment:</strong> <code style="font-size:0.78rem;">\${escapeHtml(run.targetEnvironmentId)}</code></div>
+          <div><strong style="color:var(--text-dim);">Approved Journey:</strong> <code style="font-size:0.78rem;">\${escapeHtml(run.journeyId)}</code></div>
+          <div><strong style="color:var(--text-dim);">Verification Status:</strong> <span style="color:#10b981;">\${run.safeTestMode ? 'Safe-Test Enforced (Safe)' : 'Safe-Test Inactive'}</span></div>
+          <div><strong style="color:var(--text-dim);">Artifact Count:</strong> \${state.artifacts.length}</div>
+          <div><strong style="color:var(--text-dim);">Anomaly Count:</strong> \${run.anomalyCount ?? state.candidates.length}</div>
+          <div><strong style="color:var(--text-dim);">Candidate Count:</strong> \${state.candidates.length}</div>
+          <div><strong style="color:var(--text-dim);">Created At:</strong> \${new Date(run.createdAt).toLocaleString()}</div>
+          <div><strong style="color:var(--text-dim);">Updated At:</strong> \${new Date(run.updatedAt).toLocaleString()}</div>
+          <div><strong style="color:var(--text-dim);">Failure / Blocked Reason:</strong> \${escapeHtml(run.failureReason || run.blockedReason || 'None')}</div>
+        </div>
+      </div>
+
       \${run.failureReason ? \`
         <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:0.75rem 1rem;margin-bottom:1.5rem;color:#fca5a5;font-size:0.85rem;">
           <strong>Failure Reason:</strong> \${escapeHtml(run.failureReason)}
@@ -733,7 +918,7 @@ export const CLIENT_JS_BUNDLE: string = `
         </div>
         <div class="invariant-card">
           <span>&bull;</span>
-          <span><strong>Trust Invariant:</strong> <code>confirmedBug: false</code>. Automated findings are investigation leads, not confirmed application defects.</span>
+          <span><strong>Trust Invariant:</strong> Candidate finding — not a confirmed defect. <code>confirmedBug: false</code> &bull; <code>confirmed: false</code>. Automated findings are investigation leads, not confirmed application defects. Human acceptance is not automated confirmation.</span>
         </div>
         <div class="table-responsive">
           <table class="dash-table">
@@ -752,7 +937,7 @@ export const CLIENT_JS_BUNDLE: string = `
           </table>
         </div>
         <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-dim);">
-          Triage CLI: <code>npm run review-state -- --candidate &lt;id&gt; --status investigating</code>
+          Triage CLI: <code>npm run review-state -- --candidate &lt;id&gt; --status investigating</code> (Statuses: open, investigating, accepted, dismissed, duplicate, resolved, unreviewed)
         </div>
       </div>
 
@@ -840,7 +1025,7 @@ export const CLIENT_JS_BUNDLE: string = `
       <div class="panel">
         <h2 class="panel-title" style="font-size:1rem;margin-bottom:0.75rem;">2. Defect Confirmation Invariant</h2>
         <p style="color:var(--text-muted);font-size:0.875rem;line-height:1.6;">
-          <code>confirmedBug: false</code> is non-negotiable. CrashLab classifies unexpected responses and errors as candidate defects with complete execution provenance for human review. Automated systems cannot declare application bugs without authorized engineer confirmation.
+          <code>confirmedBug: false</code> &bull; <code>confirmed: false</code> is non-negotiable. Candidate finding — not a confirmed defect. Human acceptance is not automated confirmation. CrashLab classifies unexpected responses and errors as candidate defects with complete execution provenance for human review. Automated systems cannot declare application bugs without authorized engineer confirmation.
         </p>
       </div>
       <div class="panel">
@@ -943,6 +1128,90 @@ export const CLIENT_JS_BUNDLE: string = `
           state.currentWorkspace = ws;
           poller.stop();
           handleRouteChange();
+        }
+      });
+    }
+
+    // Run execution modal triggers
+    document.querySelectorAll('.btn-open-run-modal').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const journeyId = e.currentTarget.getAttribute('data-journey-id');
+        const journey = state.journeys.find(j => j.id === journeyId);
+        if (!journey) return;
+        const target = state.targets.find(t => t.id === journey.targetEnvironmentId) || state.targets[0];
+        if (!target) {
+          alert('No configured target environment found for journey.');
+          return;
+        }
+        state.executionModalJourney = journey;
+        state.executionModalTarget = target;
+        state.executionModalAgreed = false;
+        state.executionSubmitting = false;
+        state.executionError = null;
+        state.executionFailureReasons = [];
+        state.executionModalOpen = true;
+        renderApp();
+      });
+    });
+
+    const checkConfirm = document.getElementById('check-confirm-run');
+    if (checkConfirm) {
+      checkConfirm.addEventListener('change', (e) => {
+        state.executionModalAgreed = e.target.checked;
+        const confirmBtn = document.getElementById('btn-confirm-run');
+        if (confirmBtn) {
+          confirmBtn.disabled = !state.executionModalAgreed || state.executionSubmitting;
+        }
+      });
+    }
+
+    const cancelRunModalBtn = document.getElementById('btn-cancel-run-modal');
+    if (cancelRunModalBtn) {
+      cancelRunModalBtn.addEventListener('click', () => {
+        state.executionModalOpen = false;
+        state.executionModalJourney = null;
+        state.executionModalTarget = null;
+        state.executionError = null;
+        state.executionFailureReasons = [];
+        renderApp();
+      });
+    }
+
+    const confirmRunBtn = document.getElementById('btn-confirm-run');
+    if (confirmRunBtn) {
+      confirmRunBtn.addEventListener('click', async () => {
+        if (!state.currentWorkspace || !state.selectedProject || !state.executionModalJourney || !state.executionModalTarget) {
+          return;
+        }
+        state.executionSubmitting = true;
+        state.executionError = null;
+        state.executionFailureReasons = [];
+        renderApp();
+
+        try {
+          const res = await api.postJson('/api/v1/runs', {
+            workspaceId: state.currentWorkspace.id,
+            projectId: state.selectedProject.id,
+            targetEnvironmentId: state.executionModalTarget.id,
+            journeyId: state.executionModalJourney.id,
+          });
+
+          if (res && res.success && res.data) {
+            state.executionModalOpen = false;
+            state.executionModalJourney = null;
+            state.executionModalTarget = null;
+            state.executionSubmitting = false;
+            navigate(\`run-detail/\${res.data.id}\`);
+          } else {
+            throw new Error('Unexpected response format from API server.');
+          }
+        } catch (err) {
+          state.executionSubmitting = false;
+          state.executionError = err.message || 'Execution request failed.';
+          state.executionFailureReasons = err.failureReasons && err.failureReasons.length > 0
+            ? err.failureReasons
+            : [err.message];
+          renderApp();
         }
       });
     }

@@ -680,3 +680,19 @@ A verified snapshot implementing the first authenticated CrashLab product dashbo
 | Existing Review UI | Untouched and functional (`src/reviewUi/`) |
 | Invariant preservation | `confirmedBug: false` permanently displayed on candidate findings |
 | External network / AI / Billing | **0** |
+
+---
+
+## Build 12C.2 Checkpoint: Preflight-Gated Journey Execution Dispatch from the Dashboard
+
+A verified snapshot enabling an authenticated dashboard user to select an approved journey from a project target, review safe execution parameters in a dedicated modal, dispatch execution via the strict ID-only API, pass through the synchronous preflight safety gate, enqueue onto the PostgreSQL run queue, and monitor execution progress through bounded polling. Corrects candidate defect terminology to strictly use `accepted` instead of `confirmed`, while preserving permanent invariants `confirmedBug: false` and `confirmed: false`.
+
+- **Checkpoint tag:** `build12c2-dashboard-dispatch`
+- **Scope:**
+  - Authenticated run creation modal (`#modal-run-execution`) displaying approved journey badge, target origin only, journey goal, safe-test mode status, protected test data status (never raw values), expected/prohibited actions, browser activity, artifact behaviors, and explicit confirmation checkbox.
+  - Strict ID-only API contract (`POST /api/v1/runs`) accepting solely `{ workspaceId, projectId, targetEnvironmentId, journeyId }`. Rejects client overrides (`targetUrl`, `actions`, `steps`, `locators`, `credentials`, `password`, `payment`, `safeTestMode`, `authorizationReference`) with HTTP 400.
+  - Synchronous preflight safety gate evaluation before database persistence: blocked requests yield HTTP 422 `PREFLIGHT_BLOCKED`, log audit event `run.preflight_blocked`, launch zero browsers, make zero target requests, and create zero queue or run database rows.
+  - Endpoints added: `GET /api/v1/projects/:projectId/journeys` and `GET /api/v1/journeys/:journeyId`.
+  - Candidate defect terminology alignment: permanently deprecates review status `confirmed` in favor of `accepted`. Permitted review statuses: `open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`.
+  - Invariant preservation: permanent UI rendering of `confirmedBug: false` and `confirmed: false`. Human acceptance signifies triage tracking, not bug confirmation.
+  - Real-time bounded run monitor across all lifecycle states (`queued`, `preflight`, `running`, `completed`, `partial`, `failed`, `blocked`, `cancelling`, `cancelled`) with 13 standard metrics, idempotent cancellation, and zero secret/filesystem path leakage.

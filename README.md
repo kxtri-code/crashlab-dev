@@ -60,6 +60,8 @@ This repository contains five builds, with two integration milestones layered on
   atomic claiming with row locking (`FOR UPDATE SKIP LOCKED`), lease renewal heartbeats, mandatory preflight safety gate, bounded explicit retries, idempotent cancellation, and injectable execution worker.
 - **Build 12C.1 — Authenticated CrashLab Product Dashboard** (`npm run dashboard`):
   interactive single-page web client connecting to the Product API with in-memory local dev authentication, multi-tenant workspace/project navigation, real-time lifecycle & queue status, candidate triage with `confirmedBug: false` invariant, safe artifact previews/downloads, visibility-aware polling, and bounded idempotent cancellation.
+- **Build 12C.2 — Preflight-Gated Journey Execution from the Dashboard**:
+  authenticated dashboard flow for selecting approved journeys, inspecting safe execution specs in a dedicated modal, and dispatching execution runs through the preflight safety gate. Zero browser launches or target requests on refusal, strict ID-only API contract, live run monitoring, bounded cancellation, and candidate terminology alignment (`accepted` review status replacing `confirmed`; invariants `confirmedBug: false` and `confirmed: false` preserved permanently).
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -2726,3 +2728,63 @@ Build 12B.2A provides a provider-neutral physical blob storage layer for storing
   - `GET /api/v1/artifacts/:artifactId`: Retrieve artifact metadata.
   - `GET /api/v1/artifacts/:artifactId/content`: Download raw artifact payload with `Content-Type`, `Content-Length`, `ETag`, `X-Artifact-Sha256`, and `X-Request-Id`.
 - **Zero Local Path Leaks:** Absolute server filesystem paths are never returned to clients or stored in the database.
+
+---
+
+## Build 12B.2B: PostgreSQL-Backed Asynchronous Run Queue & Worker Dispatcher
+
+Build 12B.2B implements a robust PostgreSQL-backed asynchronous execution queue and worker dispatcher decoupling API submission from execution workloads.
+
+- **Atomic Row-Level Locking:** Workers claim jobs using `SELECT ... FOR UPDATE SKIP LOCKED` on the `run_queue` table.
+- **Lease Renewal & Heartbeats:** Active workers periodically renew leases during journey execution; unrenewed leases expire safely for automatic recovery.
+- **Mandatory Preflight Safety Gate:** Runs cannot transition to `running` without passing preflight safety validation. Refused runs transition to `blocked` with zero browsers launched.
+- **Injectable Worker Boundary:** Clean decoupling via `ExecutionWorker` interface for deterministic mock tests and real Playwright browser executors.
+- **Bounded Explicit Retries:** Retries require explicit manual API calls on `failed` runs; automatic retries are permanently disabled.
+- **Tenant-Scoped Idempotent Cancellation:** Running runs abort cleanly via `AbortSignal`; queued runs transition to `cancelled` without worker invocation. Evidence is strictly preserved.
+
+---
+
+## Build 12C.1: Authenticated CrashLab Product Dashboard
+
+Build 12C.1 delivers a secure single-page web client providing complete operational visibility into CrashLab workspaces, projects, test runs, and candidate findings.
+
+- **Authenticated API Client:** Bearer token management with local dev simulation or real tokens; automatic header attachment and safe 401 handling.
+- **Tenant-Scoped Navigation:** Workspace switcher, project details, target listings, and run history isolated by workspace.
+- **Lifecycle & Queue Monitoring:** Visibility-aware bounded polling (no overlapping requests, exponential backoff, stops on hidden tabs or terminal runs).
+- **Candidate Findings & Artifact Previews:** Displays automated findings alongside human review triage states, with direct artifact preview and secure download.
+- **Strict Invariants Preserved:** Candidate findings prominently feature the dual invariants `confirmedBug: false` and `confirmed: false`.
+
+---
+
+## Build 12C.2: Preflight-Gated Journey Execution from the Dashboard
+
+Build 12C.2 introduces preflight-gated test run creation and dispatch directly from the authenticated dashboard interface.
+
+- **Preflight-Gated Dispatch Modal:**
+  - Authenticated user navigates to an approved journey under a configured project target.
+  - Clicking "Run journey →" opens the modal (`#modal-run-execution`) displaying:
+    - Approved journey badge;
+    - Target environment & origin only;
+    - Journey goal;
+    - Safe-test mode status (`enabled`);
+    - Protected test data status (`Protected test data configured` or `Protected test data missing`, never raw values);
+    - Expected actions and prohibited actions;
+    - Expected browser activity and evidence/artifact behavior;
+    - Explicit confirmation checkbox.
+- **Strict ID-Only API Contract (`POST /api/v1/runs`):**
+  - Accepts only `{ workspaceId, projectId, targetEnvironmentId, journeyId }`.
+  - Rejects client overrides (`targetUrl`, `actions`, `steps`, `locators`, `credentials`, `password`, `payment`, `safeTestMode`, `authorizationReference`) with HTTP 400.
+  - Rejects cross-workspace or mismatched target/journey references with HTTP 400.
+- **Preflight Safety Gate Enforcement:**
+  - Evaluated synchronously *before* creating run records or enqueuing queue items.
+  - Refusal returns HTTP 422 `PREFLIGHT_BLOCKED` with structured `failureReasons`.
+  - Guarantees zero browsers launched, zero target requests, and zero executable runs created.
+  - Logs audit event `run.preflight_blocked`.
+- **Live Run Monitor & Cancellation:**
+  - Enqueued runs immediately redirect to `#runs/:runId` with bounded polling across all lifecycle states (`queued`, `preflight`, `running`, `completed`, `partial`, `failed`, `blocked`, `cancelling`, `cancelled`).
+  - Displays all 13 standard execution metrics including queue status, attempt count, verification status, and safe failure reasons.
+  - Bounded, tenant-scoped, idempotent cancellation with user confirmation.
+- **Candidate Terminology Alignment:**
+  - Defect review status `confirmed` is permanently deprecated in favor of `accepted`.
+  - Permitted statuses: `open`, `investigating`, `accepted`, `dismissed`, `duplicate`, `resolved`, `unreviewed`.
+  - Permanent invariants: `confirmedBug: false` and `confirmed: false`. Human acceptance signifies triage tracking, not bug confirmation.

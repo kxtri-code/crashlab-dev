@@ -601,3 +601,137 @@ body {
   align-items: center;
   gap: 0.65rem;
 }
+
+/* Candidate Review Status Pills */
+.review-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.review-status-pill.unreviewed {
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  background: var(--bg-surface-elevated);
+}
+.review-status-pill.open {
+  border: 1px solid var(--status-created);
+  color: var(--status-created);
+  background: rgba(56, 189, 248, 0.12);
+}
+.review-status-pill.investigating {
+  border: 1px solid var(--status-preflight);
+  color: var(--status-preflight);
+  background: rgba(245, 158, 11, 0.12);
+}
+.review-status-pill.accepted {
+  border: 1px solid #10b981;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.15);
+}
+.review-status-pill.dismissed {
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  background: rgba(100, 116, 139, 0.2);
+}
+.review-status-pill.duplicate {
+  border: 1px solid #a855f7;
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.12);
+}
+.review-status-pill.resolved {
+  border: 1px solid #059669;
+  color: #10b981;
+  background: rgba(5, 150, 105, 0.15);
+}
+
+/* Execution Confirmation Modal */
+.modal-card.modal-card-lg {
+  max-width: 640px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.execution-spec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.execution-spec-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.execution-spec-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  min-width: 150px;
+}
+
+.execution-spec-value {
+  color: var(--text-main);
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.execution-warning-box {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  color: #fbbf24;
+  line-height: 1.5;
+}
+
+.preflight-error-banner {
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  color: #fca5a5;
+}
+
+.preflight-error-banner ul {
+  margin-top: 0.5rem;
+  margin-left: 1.25rem;
+}
+
+.confirmation-checkbox-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 1.25rem 0;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+}
+
+.confirmation-checkbox-group input[type="checkbox"] {
+  margin-top: 0.2rem;
+  cursor: pointer;
+}
+
+.confirmation-checkbox-group label {
+  font-size: 0.85rem;
+  color: var(--text-main);
+  cursor: pointer;
+  line-height: 1.4;
+}

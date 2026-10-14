@@ -39,6 +39,7 @@ import {
 } from '../auth/permissions.js';
 import { validateRunTransition, type TransitionContext } from '../lifecycle/runStateMachine.js';
 import { validateProductTargetPreflight } from './preflightAdapter.js';
+import type { SafetyGateStatus } from '../../preflight/types.js';
 import { assertNoSecrets } from '../secrets/sanitizer.js';
 
 export class TenantAccessDeniedError extends Error {
@@ -55,10 +56,22 @@ export class EntityNotFoundError extends Error {
   }
 }
 
-export class PreflightRefusedError extends Error {
+export class InvalidEntityRelationError extends Error {
   constructor(message: string) {
     super(message);
+    this.name = 'InvalidEntityRelationError';
+  }
+}
+
+export class PreflightRefusedError extends Error {
+  readonly failureReasons: readonly string[];
+  readonly preflightStatus: SafetyGateStatus;
+
+  constructor(message: string, failureReasons: readonly string[] = [], status: SafetyGateStatus = 'blocked') {
+    super(message);
     this.name = 'PreflightRefusedError';
+    this.failureReasons = failureReasons;
+    this.preflightStatus = status;
   }
 }
 
@@ -432,6 +445,32 @@ export class ProductService {
     return this.repos.journeys.listByTarget(workspaceId, targetId);
   }
 
+  async getJourney(workspaceId: string, journeyId: string, actorUserId: string): Promise<ProductApprovedJourney> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canReadWorkspace(membership, workspaceId)) {
+      throw new TenantAccessDeniedError(`Access denied to workspace "${workspaceId}".`);
+    }
+    const journey = await this.repos.journeys.findById(workspaceId, journeyId);
+    if (!journey) {
+      throw new EntityNotFoundError(`Journey "${journeyId}" not found in workspace "${workspaceId}".`);
+    }
+    return journey;
+  }
+
+  async listJourneysByProject(workspaceId: string, projectId: string, actorUserId: string): Promise<readonly ProductApprovedJourney[]> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canReadWorkspace(membership, workspaceId)) {
+      throw new TenantAccessDeniedError(`Access denied to workspace "${workspaceId}".`);
+    }
+    const targets = await this.repos.targets.listByProject(workspaceId, projectId);
+    const results: ProductApprovedJourney[] = [];
+    for (const t of targets) {
+      const list = await this.repos.journeys.listByTarget(workspaceId, t.id);
+      results.push(...list);
+    }
+    return results;
+  }
+
   // --- Test Runs & Lifecycle -------------------------------------------------
 
   async createRun(input: CreateTestRunInput, actorUserId: string): Promise<TestRun> {
@@ -494,10 +533,50 @@ export class ProductService {
     if (!target) {
       throw new EntityNotFoundError(`Target "${input.targetEnvironmentId}" not found in workspace "${input.workspaceId}".`);
     }
+    if (target.projectId !== input.projectId) {
+      throw new InvalidEntityRelationError(`Target "${input.targetEnvironmentId}" does not belong to project "${input.projectId}".`);
+    }
 
     const journey = await this.repos.journeys.findById(input.workspaceId, input.journeyId);
     if (!journey) {
       throw new EntityNotFoundError(`Journey "${input.journeyId}" not found in workspace "${input.workspaceId}".`);
+    }
+    if (journey.projectId !== input.projectId || journey.targetEnvironmentId !== input.targetEnvironmentId) {
+      throw new InvalidEntityRelationError(`Journey "${input.journeyId}" does not belong to target environment "${input.targetEnvironmentId}".`);
+    }
+
+    if (
+      !journey.schemaVersion ||
+      journey.schemaVersion !== '1.0' ||
+      !journey.goal ||
+      typeof journey.goal !== 'string' ||
+      !journey.origin ||
+      !Array.isArray(journey.allowedActions) ||
+      !Array.isArray(journey.forbiddenActions)
+    ) {
+      throw new InvalidEntityRelationError(`Journey "${input.journeyId}" is malformed or invalid schema.`);
+    }
+
+    // Optional preflight enforcement before enqueuing
+    if (input.validatePreflight) {
+      if ((input as unknown as { safeTestMode?: boolean }).safeTestMode === false) {
+        throw new PreflightRefusedError('Safe-test mode cannot be disabled.', ['Safe-test mode is disabled.']);
+      }
+
+      const preflightResult = validateProductTargetPreflight(target, [journey]);
+      if (preflightResult.status !== 'ready') {
+        const failureReasons = preflightResult.failureReasons;
+        await this.recordAudit(input.workspaceId, actorUserId, 'run.preflight_blocked', 'test_run', `refused-${Date.now()}`, {
+          targetId: target.id,
+          journeyId: journey.id,
+          reasons: failureReasons,
+        });
+        throw new PreflightRefusedError(
+          preflightResult.failureReasons.join('; ') || 'Preflight safety checks failed.',
+          failureReasons,
+          preflightResult.status,
+        );
+      }
     }
 
     const ts = this.timestamp();

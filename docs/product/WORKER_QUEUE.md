@@ -14,6 +14,15 @@ The Run Queue decouples user-facing API run requests from browser execution work
 API Request (POST /api/v1/runs)
        │
        ▼
+Synchronous Safety Preflight Gate
+  ├── BLOCKED: HTTP 422 PREFLIGHT_BLOCKED returned immediately.
+  │            Audit event logged (run.preflight_blocked).
+  │            Zero DB rows created (no test_run, no queue item).
+  │            Zero browsers launched, zero target requests.
+  │
+  └── READY: Proceed to persistence.
+       │
+       ▼
 ProductService.enqueueRun()
   ├── TestRun persisted (status: 'queued')
   └── RunQueueItem persisted (queue_status: 'queued', available_at: NOW)
@@ -24,7 +33,7 @@ Worker Claiming (SELECT ... FOR UPDATE SKIP LOCKED)
   └── Transition: queued -> preflight (leaseOwner: worker-id, leaseExpiry: NOW + 60s)
        │
        ▼
-Preflight Safety Gate Validation
+Secondary Preflight Verification (Defense in Depth)
   ├── BLOCKED: Zero browsers launched, zero target requests.
   │            Run status -> 'blocked'. Lease released.
   │
@@ -135,6 +144,17 @@ When a preflight gate fails:
 - **Safe failure storage:** Safe sanitized reason is persisted (e.g. `AUTHORIZATION_REFERENCE required for staging`).
 - **No secret leakage:** Raw configuration secrets or credentials are never stored.
 - **No client bypass:** Client flags cannot bypass preflight gate validation.
+
+### 4.2 Preflight Timing: API Enqueue vs Worker Claim
+CrashLab applies a two-tiered preflight safety gate strategy (defense-in-depth):
+
+1. **Synchronous Dashboard API Dispatch (`POST /api/v1/runs`):**
+   - Preflight gate runs **before** creating any `TestRun` or `RunQueueItem`.
+   - If preflight fails, the server records an audit event (`run.preflight_blocked`), creates **no database records** (no queue row, no run row), and returns HTTP 422 `PREFLIGHT_BLOCKED` with structured `failureReasons`.
+   - If preflight passes, the run is created in `queued` status and enqueued onto `run_queue`.
+2. **Asynchronous Worker Re-verification (Defense in Depth):**
+   - When a worker claims a `queued` run and transitions it to `preflight`, it re-executes the preflight safety gate against the current target and journey definitions.
+   - If preflight is refused at this stage, the run transitions to `blocked` (terminal), the queue lease is released, and zero browser instances are created.
 
 ---
 

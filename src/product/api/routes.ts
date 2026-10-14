@@ -11,7 +11,13 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { ProductService, TenantAccessDeniedError, EntityNotFoundError } from '../service/productService.js';
+import {
+  ProductService,
+  TenantAccessDeniedError,
+  EntityNotFoundError,
+  InvalidEntityRelationError,
+  PreflightRefusedError,
+} from '../service/productService.js';
 import type { ApiResponse, HealthResponse } from './types.js';
 import type { AuthConfig } from '../auth/identity.js';
 import { loadAuthConfigFromEnv } from '../auth/identity.js';
@@ -288,6 +294,36 @@ export async function handleProductApiRequest(
       return;
     }
 
+    // Project journeys endpoint: /api/v1/projects/:projectId/journeys
+    const projectJourneysMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)\/journeys$/);
+    if (projectJourneysMatch && method === 'GET') {
+      const projectId = projectJourneysMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const journeys = await context.service.listJourneysByProject(workspaceId, projectId, actorUserId);
+      sendJson(res, 200, { success: true, data: { journeys }, requestId }, requestId);
+      return;
+    }
+
+    // Journey detail endpoint: /api/v1/journeys/:journeyId
+    const journeyDetailMatch = pathname.match(/^\/api\/v1\/journeys\/([^/]+)$/);
+    if (journeyDetailMatch && method === 'GET') {
+      const journeyId = journeyDetailMatch[1]!;
+      const workspaceId = searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required query parameter "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const journey = await context.service.getJourney(workspaceId, journeyId, actorUserId);
+      sendJson(res, 200, { success: true, data: journey, requestId }, requestId);
+      return;
+    }
+
     // Project candidates endpoint: /api/v1/projects/:projectId/candidates
     const projectCandidatesMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)\/candidates$/);
     if (projectCandidatesMatch && method === 'GET') {
@@ -335,13 +371,52 @@ export async function handleProductApiRequest(
 
     // Create/enqueue run endpoint: POST /api/v1/runs
     if (pathname === '/api/v1/runs' && method === 'POST') {
-      const body = await parseBody<{
+      const rawBody = await parseBody<Record<string, unknown>>(req);
+
+      // Explicitly reject prohibited client overrides
+      const FORBIDDEN_KEYS = [
+        'rawtargeturl',
+        'targeturl',
+        'url',
+        'allowedorigins',
+        'allowedorigin',
+        'origin',
+        'actions',
+        'action',
+        'steps',
+        'locators',
+        'locator',
+        'credentials',
+        'credential',
+        'password',
+        'payment',
+        'safetestmode',
+        'safetest',
+        'authorizationreference',
+        'authorization',
+        'token',
+        'secret',
+      ];
+      for (const key of Object.keys(rawBody)) {
+        if (FORBIDDEN_KEYS.includes(key.toLowerCase())) {
+          sendError(
+            res,
+            400,
+            'BAD_REQUEST',
+            `Forbidden override field "${key}". Runs must only reference approved entity IDs.`,
+            requestId,
+          );
+          return;
+        }
+      }
+
+      const body = rawBody as {
         workspaceId?: string;
         projectId?: string;
         targetEnvironmentId?: string;
         journeyId?: string;
         maxAttempts?: number;
-      }>(req);
+      };
 
       if (!body.workspaceId || !body.projectId || !body.targetEnvironmentId || !body.journeyId) {
         sendError(
@@ -363,6 +438,7 @@ export async function handleProductApiRequest(
           journeyId: body.journeyId,
           maxAttempts: body.maxAttempts,
           requestId,
+          validatePreflight: true,
         },
         actorUserId,
       );
@@ -575,6 +651,17 @@ export async function handleProductApiRequest(
     }
     if (err instanceof EntityNotFoundError) {
       sendError(res, 404, 'NOT_FOUND', err.message, requestId);
+      return;
+    }
+    if (err instanceof InvalidEntityRelationError) {
+      sendError(res, 400, 'BAD_REQUEST', err.message, requestId);
+      return;
+    }
+    if (err instanceof PreflightRefusedError) {
+      sendError(res, 422, 'PREFLIGHT_BLOCKED', err.message, requestId, {
+        failureReasons: err.failureReasons,
+        status: err.preflightStatus,
+      });
       return;
     }
     sendError(res, 500, 'INTERNAL_SERVER_ERROR', (err as Error).message, requestId);
