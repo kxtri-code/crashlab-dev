@@ -66,6 +66,8 @@ This repository contains five builds, with two integration milestones layered on
   asymmetric Supabase OIDC/JWT verification via JWKS, strict environment startup validation, container health and readiness probes (`/health`, `/readiness`), request body limits (HTTP 413), production CORS origin whitelisting, and fail-closed secret protection.
 - **Build 12D.2A — Private Supabase Storage for Production Artifacts** (`npm run storage:check`, `npm run storage:setup`):
   real cloud object-storage provider for production test artifacts (screenshots, traces, HAR files, logs, reports) using Supabase Storage REST API with private-bucket enforcement (`public: false`), server-only service credentials, SHA-256 integrity verification, bounded upload sizes, authenticated streaming downloads, and atomic cleanup on metadata failure.
+- **Build 12D.2B — Independently Deployable Execution Worker Service** (`npm run worker`, `npm run storage:smoke`):
+  dedicated, headless background worker service decoupled from the Product API web server. Consumes queued jobs from PostgreSQL using atomic row-level lease claiming, enforces preflight approval before creating browsers or sending traffic, executes Playwright sessions with strict resource cleanup in `finally`, uploads artifacts through the configured BlobStore (local or private Supabase Storage), renews leases via heartbeat, and shuts down gracefully on SIGTERM/SIGINT with bounded job timeouts.
 
 Each build is a separate artifact, and no build rewrites another's:
 
@@ -2822,3 +2824,40 @@ Build 12D.1 replaces development-only authentication and local assumptions with 
   - Background workers are disabled by default and never started automatically by web server processes.
 - **Frontend Secret Audit:**
   - Confirmed zero server secrets (`DATABASE_URL`, `PRODUCT_AUTH_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, private keys) bundled into client-side assets.
+
+---
+
+## Build 12D.2B: Independently Deployable CrashLab Worker Service
+
+Build 12D.2B packages the CrashLab execution worker as a standalone, hardened service that runs independently from the Product API web server.
+
+- **Process Separation:**
+  - Dedicated CLI entry point (`src/product/worker/main.ts`) launched via `npm run worker`.
+  - The Product API web server **never** starts a worker process automatically.
+  - Supports `--once` mode (claims and runs at most one job, then exits) for cron or batch runners.
+- **Fail-Closed Configuration:**
+  - Disabled by default (`PRODUCT_WORKER_ENABLED=false`).
+  - Worker ID is strictly sanitized against injection attacks (`/^[a-zA-Z0-9_\-\.]+$/`).
+  - Bounded polling (100..60000ms), bounded lease durations (5..600s), bounded concurrency (1..10), and bounded shutdown timeouts (1000..120000ms).
+  - Missing database or storage configurations in production fail closed immediately.
+- **Preflight Safety Enforcement:**
+  - Claims queued jobs atomically via PostgreSQL `FOR UPDATE SKIP LOCKED`.
+  - Runs the preflight safety gate **before** launching Playwright or contacting any target URL.
+  - Blocked preflight launches zero browsers and makes zero external network requests.
+  - Releases leases safely and marks the run as blocked with sanitized reasons.
+- **Browser Lifecycle & Artifact Storage:**
+  - Creates a fresh browser and context per run; guarantees closing page, context, and browser in `finally` blocks.
+  - Payment-adjacent actions remain strictly blocked; sensitive form data omits screenshots.
+  - Saves all execution artifacts (execution JSON, anomalies JSON, logs) through the configured `BlobStore` (local filesystem or private Supabase Storage).
+  - Zero browser-direct storage access; rollback on database metadata failure.
+- **Lease Heartbeat & Crash Handling:**
+  - Background heartbeat renews leases during execution.
+  - Lost leases halt unsafe state mutations to prevent split-brain completion.
+  - Terminal states (`completed`, `failed`, `blocked`, `cancelled`) are strictly immutable.
+  - Zero automatic retries on failure.
+- **Internal Health Probes & Container Packaging:**
+  - Lightweight internal HTTP server on port 3230 exposing `GET /health` and `GET /readiness`.
+  - Probes report worker ID, uptime, active job count, and connectivity without leaking secrets or URLs.
+  - Deployment-neutral `Dockerfile.worker` running as non-root user with Playwright Chromium dependencies installed.
+- **Controlled Storage Smoke Command:**
+  - `npm run storage:smoke`: Safe, non-destructive test verifying upload, download, checksum matching, and exact deletion against private Supabase Storage.

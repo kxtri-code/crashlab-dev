@@ -199,17 +199,23 @@ export interface ExecutionWorker {
 
 ---
 
-## 7. Local Worker CLI & Configuration
+## 7. Standalone Worker Service (Build 12D.2B)
 
-### 7.1 Configuration via Environment
+As packaged in Build 12D.2B, the worker runs as a dedicated, independent process (`src/product/worker/main.ts`) decoupled entirely from the Product API web server.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PRODUCT_WORKER_ENABLED` | `false` | Whether worker loop starts automatically (disabled by default). |
-| `PRODUCT_WORKER_ID` | `worker-<pid>` | Sanitized unique worker instance identifier. |
-| `PRODUCT_WORKER_POLL_MS` | `1000` | Polling frequency in milliseconds (min: 100ms). |
-| `PRODUCT_WORKER_LEASE_SECONDS` | `60` | Lease expiry duration in seconds (min: 5s). |
-| `PRODUCT_WORKER_MAX_CONCURRENCY` | `1` | Maximum parallel jobs processed per worker instance (bounded). |
+### 7.1 Server-Only Configuration via Environment
+
+| Variable | Default | Bounds | Description |
+| --- | --- | --- | --- |
+| `PRODUCT_WORKER_ENABLED` | `false` | boolean | Disabled by default. Worker fails closed if set to false. |
+| `PRODUCT_WORKER_ID` | `worker-<pid>` | regex `^[a-zA-Z0-9_\-\.]+$` | Sanitized unique worker instance identifier. |
+| `PRODUCT_WORKER_POLL_MS` | `1000` | 100 .. 60000 | Polling frequency in milliseconds. |
+| `PRODUCT_WORKER_LEASE_SECONDS` | `60` | 5 .. 600 | Lease expiry duration in seconds. |
+| `PRODUCT_WORKER_MAX_CONCURRENCY` | `1` | 1 .. 10 | Maximum parallel jobs processed per worker instance. |
+| `PRODUCT_WORKER_SHUTDOWN_TIMEOUT_MS` | `30000` | 1000 .. 120000 | Timeout waiting for active in-flight jobs on SIGINT/SIGTERM. |
+| `PRODUCT_WORKER_HEALTH_PORT` | `3230` | 1 .. 65535 | Dedicated internal HTTP port for health probes. |
+| `PRODUCT_STORAGE` | `in-memory` | `in-memory` \| `postgres` | Repository persistence provider (`postgres` in production). |
+| `PRODUCT_BLOB_STORE` | `local` | `local` \| `supabase` | Artifact storage provider (`supabase` in production). |
 
 ### 7.2 CLI Commands
 
@@ -218,9 +224,14 @@ Run worker in single-execution mode (claims at most one run and exits cleanly):
 npm run worker -- --once
 ```
 
-Run worker with custom polling interval and ID:
+Run worker daemon with internal health probe server on port 3230:
 ```bash
-npm run worker -- --poll-ms 500 --worker-id worker-local-alpha
+npm run worker -- --health-port 3230
+```
+
+Run worker with custom polling interval, concurrency, and worker ID:
+```bash
+npm run worker -- --poll-ms 500 --concurrency 2 --worker-id worker-prod-01
 ```
 
 Display CLI help:
@@ -228,13 +239,21 @@ Display CLI help:
 npm run worker -- --help
 ```
 
+### 7.3 Health & Readiness Endpoints
+
+The worker exposes lightweight internal HTTP probes on `PRODUCT_WORKER_HEALTH_PORT` (default: 3230):
+- `GET /health`: Returns process uptime, worker ID, active job count, and max concurrency.
+- `GET /readiness`: Returns 200 OK or 503 Service Unavailable based on database queue and blob store connectivity.
+
+Both endpoints sanitize output to prevent leaking database connection strings, service keys, JWTs, or test data.
+
 ---
 
 ## 8. What is NOT Production-Ready Yet
 
-This build establishes the foundational PostgreSQL-backed queue and dispatching mechanics. The following components are explicitly reserved for future builds:
-- Redis or external queue broker integrations (SQS, RabbitMQ, Kafka).
-- Docker or Kubernetes worker pod auto-scaling.
-- Public web dashboard and streaming log UI.
+- SSE or WebSocket streaming of real-time logs.
 - Billing, subscription, and usage quotas.
-- Automatic bug confirmation (CrashLab invariants require human review).
+- Public self-serve signup.
+- Automatic bug confirmation (CrashLab invariants permanently preserve `confirmedBug: false`).
+- Automatic retries on step or execution failure.
+- Kubernetes autoscaling or queue broker migration.

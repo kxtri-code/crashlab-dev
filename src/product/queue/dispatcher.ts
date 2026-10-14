@@ -117,6 +117,20 @@ export class RunDispatcher {
   }
 
   /**
+   * Aborts all active in-flight runs (used during worker timeout shutdown).
+   */
+  async abortAllActive(): Promise<void> {
+    for (const [runId, controller] of this.activeAbortControllers) {
+      controller.abort();
+      try {
+        await this.worker.cancelRun(runId);
+      } catch {
+        // Safe disposal
+      }
+    }
+  }
+
+  /**
    * Claims and dispatches the next available queued run.
    * Returns null if no eligible run is available.
    */
@@ -153,16 +167,21 @@ export class RunDispatcher {
       return { runId, workspaceId, status: 'failed', reason: err };
     }
 
-    // Check if run was already cancelled before claiming
-    if (run.status === 'cancelled' || item.queueStatus === 'cancelled') {
+    // Terminal state protection: terminal states cannot be re-executed or overwritten
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'blocked' || run.status === 'cancelled') {
       await this.queue.update({
         ...item,
-        queueStatus: 'cancelled',
-        completedAt: this.nowIso(),
+        queueStatus: run.status,
+        completedAt: item.completedAt ?? this.nowIso(),
         updatedAt: this.nowIso(),
       });
       await this.queue.releaseLease(runId, this.workerId);
-      return { runId, workspaceId, status: 'cancelled', reason: 'Run was cancelled before execution.' };
+      return {
+        runId,
+        workspaceId,
+        status: run.status as any,
+        reason: `Run "${runId}" is already in terminal status "${run.status}". Cannot overwrite terminal state.`,
+      };
     }
 
     // Step 1: Load target and journey definitions
@@ -349,39 +368,73 @@ export class RunDispatcher {
     let reproductionReportRef = workerResult.reproductionReportRef;
 
     if (workerResult.artifacts && workerResult.artifacts.length > 0) {
-      for (const artifact of workerResult.artifacts) {
-        const artifactId = `art-${randomUUID().slice(0, 12)}`;
-        const blobMeta = await this.blobs.put({
-          workspaceId,
-          projectId: item.projectId,
-          runId,
-          artifactId,
-          contentType: artifact.contentType,
-          content: artifact.payload,
-        });
+      try {
+        for (const artifact of workerResult.artifacts) {
+          const artifactId = `art-${randomUUID().slice(0, 12)}`;
+          const locator = {
+            workspaceId,
+            projectId: item.projectId,
+            runId,
+            artifactId,
+          };
+          const blobMeta = await this.blobs.put({
+            ...locator,
+            contentType: artifact.contentType,
+            content: artifact.payload,
+          });
 
-        const createdArtifact: RunArtifact = {
-          id: artifactId,
-          schemaVersion: '1.0',
-          workspaceId,
-          runId,
-          type: artifact.type,
-          storagePath: blobMeta.safeObjectKey,
-          byteSize: blobMeta.byteLength,
-          sha256: blobMeta.checksum,
-          contentType: artifact.contentType,
-          createdAt: endTs,
-        };
+          const createdArtifact: RunArtifact = {
+            id: artifactId,
+            schemaVersion: '1.0',
+            workspaceId,
+            runId,
+            type: artifact.type,
+            storagePath: blobMeta.safeObjectKey,
+            byteSize: blobMeta.byteLength,
+            sha256: blobMeta.checksum,
+            contentType: artifact.contentType,
+            createdAt: endTs,
+          };
 
-        await this.repos.artifacts.create(createdArtifact);
+          try {
+            await this.repos.artifacts.create(createdArtifact);
+          } catch (dbErr) {
+            // Clean up written blob if metadata persistence fails
+            try {
+              await this.blobs.delete(locator);
+            } catch {
+              // Best-effort cleanup
+            }
+            throw dbErr;
+          }
 
-        if (artifact.type === 'execution' && !executionReportRef) {
-          executionReportRef = createdArtifact.storagePath;
-        } else if (artifact.type === 'anomalies' && !anomalyReportRef) {
-          anomalyReportRef = createdArtifact.storagePath;
-        } else if (artifact.type === 'reproduction' && !reproductionReportRef) {
-          reproductionReportRef = createdArtifact.storagePath;
+          if (artifact.type === 'execution' && !executionReportRef) {
+            executionReportRef = createdArtifact.storagePath;
+          } else if (artifact.type === 'anomalies' && !anomalyReportRef) {
+            anomalyReportRef = createdArtifact.storagePath;
+          } else if (artifact.type === 'reproduction' && !reproductionReportRef) {
+            reproductionReportRef = createdArtifact.storagePath;
+          }
         }
+      } catch (storageErr) {
+        const failReason = `Artifact storage failed: ${(storageErr as Error).message}`;
+        await this.repos.runs.update({
+          ...run,
+          status: 'failed',
+          failureReason: failReason,
+          finishedAt: endTs,
+          updatedAt: endTs,
+        });
+        await this.queue.update({
+          ...item,
+          queueStatus: 'failed',
+          lastError: failReason,
+          completedAt: endTs,
+          updatedAt: endTs,
+        });
+        await this.queue.releaseLease(runId, this.workerId);
+        await this.recordAudit(workspaceId, 'run.failed', runId, { error: failReason });
+        return { runId, workspaceId, status: 'failed', reason: failReason };
       }
     }
 

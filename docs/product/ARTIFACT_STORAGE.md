@@ -151,7 +151,26 @@ All endpoints require Bearer token authorization and enforce workspace isolation
 
 ---
 
-## 5. Configuration Reference
+---
+
+## 5. Storage Smoke Test CLI (Build 12D.2B)
+
+Operators can verify real private Supabase Storage connectivity safely using:
+```bash
+npm run storage:smoke
+```
+
+Safety rules:
+- Uploads a small, harmless JSON artifact under a dedicated `workspace/smoke_ws/...` locator.
+- Downloads the artifact and verifies bit-for-bit SHA-256 match.
+- Deletes **only** that exact test object.
+- Never prints service keys, tokens, or credentials.
+- Refuses broad bucket cleanup.
+- Fails closed if `PRODUCT_BLOB_STORE` is not `supabase`.
+
+---
+
+## 6. Configuration Reference
 
 ```ini
 # Provider: 'local' (development/test) or 'supabase' (production) or 's3' (boundary)

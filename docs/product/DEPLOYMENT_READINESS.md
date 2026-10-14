@@ -115,17 +115,19 @@ CrashLab adheres to strict database operational safety invariants:
 
 ## 5. Worker Startup & Execution Policy
 
-1. **Separation of Concerns:** The Product API web server processes API traffic and enqueues runs; it **does not** start a background worker loop unless explicitly commanded.
-2. **Explicit Worker Command:** Workers must be run as separate processes or explicitly enabled services:
+1. **Separation of Concerns:** The Product API web server processes API traffic and enqueues runs; it **never** starts a background worker loop automatically.
+2. **Explicit Worker Service (Build 12D.2B):** Workers run as separate services using `npm run worker` or the container image built from `Dockerfile.worker`:
    ```bash
-   npm run product:worker
+   npm run worker
+   npm run worker -- --once
    ```
 3. **Safe Worker Identity:** Worker IDs must conform to `assertSafeWorkerId` (`[a-zA-Z0-9._-]+`) to prevent injection into database lease fields.
 4. **Mandatory Preflight Gate:** Every claimed run is validated through the preflight safety gate before any browser process is spawned.
 5. **Bounded Concurrency & Clean Shutdown:**
    - Worker concurrency is strictly bounded (`PRODUCT_WORKER_MAX_CONCURRENCY=1..10`).
    - Leases automatically time out to allow crash recovery (`PRODUCT_WORKER_LEASE_SECONDS`).
-   - SIGINT/SIGTERM triggers graceful drain of active leases.
+   - SIGINT/SIGTERM triggers graceful shutdown with bounded job drain timeout (`PRODUCT_WORKER_SHUTDOWN_TIMEOUT_MS`).
+6. **Internal Health Probes:** Exposes `GET /health` and `GET /readiness` on port 3230 without leaking secrets.
 
 ---
 
@@ -152,7 +154,7 @@ An audit of the dashboard frontend bundle confirms:
 ## 8. What Remains Before Public Launch
 
 Before moving from private beta to general public availability, the following milestones remain:
-1. **Independent Standalone Worker Deployment:** Deploying the worker fleet as dedicated container services separately from the Product API web server.
+1. **Actual Cloud Hosting Selection & Live Deployment:** Selecting the deployment platform (e.g., Render, Fly.io, Railway, AWS ECS) and provisioning production web/worker containers.
 2. **Server-Sent Events (SSE):** Real-time run progress and queue monitoring via SSE.
 3. **Self-Service User Provisioning:** Automated user onboarding and organization invitation workflows with Supabase Auth hooks.
 4. **Production Rate Limiting:** Global and per-workspace token bucket rate limiting on public API endpoints.

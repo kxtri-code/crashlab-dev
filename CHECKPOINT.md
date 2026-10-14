@@ -773,3 +773,71 @@ A verified snapshot implementing a real, private object-storage provider for pro
 | Target network traffic | **Zero external target traffic** |
 | Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
 | External network / AI / Billing | **0** |
+
+---
+
+## Build 12D.2B Checkpoint: Independently Deployable CrashLab Worker Service
+
+A verified snapshot packaging the CrashLab worker as a separately deployable service that consumes queued runs from PostgreSQL, executes only approved journeys, stores artifacts through the configured BlobStore, and remains independent from the Product API web server.
+
+- **Checkpoint tag:** `build12d2b-worker-service`
+- **Scope:**
+  - **Worker Service Boundary:**
+    - Dedicated entry point: `src/product/worker/main.ts`, `src/product/worker/health.ts`, `src/product/worker/config.ts`, `src/product/worker/service.ts`, `src/product/worker/playwrightWorker.ts`.
+    - Started independently via `npm run worker`. Product API web server never starts a worker automatically.
+    - CLI modes: `--once` (processes at most one run and exits cleanly), normal daemon mode (SIGINT/SIGTERM graceful shutdown), `--help`, `--health-port`, `--poll-ms`, `--worker-id`, `--concurrency`.
+  - **Server-Only Configuration & Bounds:**
+    - Fail-closed validation; disabled by default (`PRODUCT_WORKER_ENABLED=false`).
+    - Worker ID sanitized against injection (`/^[a-zA-Z0-9_\-\.]+$/`).
+    - Bounded poll interval (100..60000ms, default 1000ms), bounded lease duration (5..600s, default 60s), bounded concurrency (1..10, default 1), bounded shutdown timeout (1000..120000ms, default 30000ms).
+    - Fails closed on missing database or storage secrets in production.
+  - **Preflight Safety Enforcement:**
+    - Atomically claims queued run using PostgreSQL `FOR UPDATE SKIP LOCKED`.
+    - Strictly runs preflight safety gate **before** any browser creation or target contact.
+    - If preflight fails: 0 browsers launched, 0 network requests sent, run transitioned to blocked, lease released safely, confirmedBug: false and confirmed: false preserved permanently.
+  - **Browser Lifecycle & Execution:**
+    - Reuses established Build 3 execution engine and Build 4 anomaly classifier without code duplication.
+    - Fresh browser and context per run; guaranteed disposal of page, context, and browser in `finally` blocks.
+    - Safe test mode enforced; payment-adjacent actions blocked; screenshot omission on sensitive data entry preserved.
+    - Zero arbitrary waits; zero automatic retries on step or run failure.
+  - **Artifact Storage & Rollback:**
+    - Stores execution artifacts (`execution.json`, `anomalies.json`, `execution.log`) into configured `BlobStore` (`local` or private `supabase`).
+    - Computes and verifies SHA-256 checksums and byte length.
+    - Rolls back (purges) uploaded blobs if subsequent database metadata persistence fails.
+  - **Lease Heartbeat & Terminal State Immutability:**
+    - Background heartbeat renews leases during job execution.
+    - Lost lease halts database state updates to prevent split-brain overwrites.
+    - Terminal states (`completed`, `failed`, `blocked`, `cancelled`) cannot be re-executed or overwritten.
+  - **Graceful Shutdown & Bounded Concurrency:**
+    - Captures SIGINT and SIGTERM signals; stops polling immediately.
+    - Waits for active in-flight jobs up to `PRODUCT_WORKER_SHUTDOWN_TIMEOUT_MS`.
+    - Aborts outstanding jobs via `AbortController` and Playwright session cancellation if timeout is exceeded.
+  - **Worker Health & Readiness Server:**
+    - Exposes minimal HTTP probe server on port 3230: `GET /health` and `GET /readiness`.
+    - Reports worker ID, process uptime, active job count, max concurrency, queue connectivity, and storage connectivity.
+    - Zero secrets, tokens, credentials, or target URLs exposed in health outputs.
+  - **Container Packaging:**
+    - `Dockerfile.worker` built on Node 20 Debian bookworm with Playwright Chromium dependencies installed, non-root execution (`USER node`), writable `/tmp` scratch area, and `HEALTHCHECK`.
+    - `.dockerignore` excluding `.git`, `.env`, `node_modules`, `reports`, `tests`, `docs`.
+  - **Supabase Storage Smoke Command:**
+    - `npm run storage:smoke`: Safe, non-destructive test verifying upload, download, checksum matching, and exact deletion against private Supabase Storage without touching customer data.
+
+### Verification at Checkpoint Time
+
+| Check | Result |
+| :--- | :--- |
+| Full unit test suite (`npm run test:unit`) | **1,454 passed** (51 files) |
+| Browser test suite (`npm run test:browser`) | **193 passed** (14 files) |
+| Build 12D.2B unit tests (`build12d2bWorkerService.test.ts`) | **28 passed** |
+| `npm run typecheck` | exit 0 |
+| `npm run build` | exit 0 |
+| Local demo (`npm run demo` & `--clean`) | passed cleanly, exit 0 |
+| Worker CLI `--help` | exit 0 |
+| Worker CLI `--once` (disabled refusal & enabled execution) | exit 1 on disabled, exit 0 on enabled |
+| Storage smoke CLI `--help` | exit 0 |
+| Git diff whitespace / syntax check (`git diff --check`) | clean, exit 0 |
+| `.env` staging status | **NOT staged / NOT tracked** |
+| Target network traffic | **Zero external target traffic** |
+| Invariant preservation | `confirmed: false`, `confirmedBug: false`, `safeTestMode: true` strictly preserved |
+| External network / AI / Billing | **0** |
+

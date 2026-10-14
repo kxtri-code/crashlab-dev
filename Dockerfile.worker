@@ -1,0 +1,69 @@
+# Dockerfile.worker — CrashLab Independent Worker Service (Build 12D.2B)
+#
+# Packages the CrashLab queue worker as a standalone, deployable service
+# separated completely from the Product API web server.
+#
+# Invariants:
+# - Runs as non-root user (node).
+# - Playwright Chromium dependencies installed cleanly.
+# - Zero secrets (.env, credentials) baked into the image.
+# - Shuts down gracefully on SIGTERM.
+# - Internal health check endpoint on port 3230.
+
+FROM node:20-bookworm-slim
+
+# Install system dependencies required for headless Chromium and health probes
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Ensure writable temporary directories for Playwright and Chromium caches
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
+    NODE_ENV=production \
+    PRODUCT_WORKER_ENABLED=true \
+    PRODUCT_WORKER_HEALTH_PORT=3230
+
+# Install Playwright browser binary
+RUN mkdir -p /home/node/.cache/ms-playwright && chown -R node:node /home/node
+
+# Copy package manifests and build dependencies
+COPY package*.json tsconfig*.json ./
+RUN npm ci
+
+# Copy application source code
+COPY src/ ./src/
+
+# Compile TypeScript to JavaScript distribution
+RUN npm run build
+
+# Install Chromium as node user
+USER node
+RUN npx playwright install chromium
+
+# Internal health probe
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3230/health || exit 1
+
+# Expose internal health and readiness port
+EXPOSE 3230
+
+# Dedicated worker entry point
+CMD ["node", "dist/src/product/worker/main.js"]

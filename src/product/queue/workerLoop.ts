@@ -107,8 +107,9 @@ export class WorkerLoop {
 
   /**
    * Gracefully stops the worker loop, waiting for any active jobs to complete.
+   * If timeoutMs is reached before active jobs finish, active jobs are safely aborted.
    */
-  async stop(): Promise<void> {
+  async stop(timeoutMs?: number): Promise<void> {
     this.running = false;
 
     if (this.timer) {
@@ -120,9 +121,24 @@ export class WorkerLoop {
       return;
     }
 
-    // Wait for active jobs to finish
+    let timeoutTimer: NodeJS.Timeout | null = null;
     await new Promise<void>((resolve) => {
-      this.stopPromiseResolve = resolve;
+      this.stopPromiseResolve = () => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        resolve();
+      };
+
+      if (timeoutMs && timeoutMs > 0) {
+        timeoutTimer = setTimeout(async () => {
+          this.stopPromiseResolve = null;
+          try {
+            await this.dispatcher.abortAllActive();
+          } catch {
+            // Safe abort
+          }
+          resolve();
+        }, timeoutMs);
+      }
     });
   }
 }

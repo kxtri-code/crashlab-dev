@@ -1,0 +1,232 @@
+/**
+ * Playwright Execution Worker — Build 12D.2B.
+ *
+ * Implements the real Playwright browser execution worker for CrashLab.
+ * Consumes approved journeys and executes them against verified target environments.
+ *
+ * Invariants:
+ * - Preflight validation enforced before ANY browser is launched.
+ * - Blocked preflight launches ZERO browsers and sends ZERO network requests.
+ * - Fresh browser context and page created for every single run.
+ * - Browser, context, and page strictly closed in finally block.
+ * - safeTestMode is permanently true (payment actions permanently prohibited).
+ * - confirmedBug: false and confirmed: false invariants strictly preserved.
+ * - Zero automatic retries on failure.
+ * - Zero secrets or credentials written to logs or artifacts.
+ */
+
+import type { ExecutionWorker, ExecutionWorkerInput, ExecutionWorkerResult, WorkerArtifactPayload } from '../queue/worker.js';
+import { validateProductTargetPreflight } from '../service/preflightAdapter.js';
+import type { JourneyPlan } from '../../journey/types.js';
+import { executeJourney } from '../../executor/executor.js';
+import { buildAnomalyReport } from '../../anomaly/report.js';
+import { openBrowserSession, type BrowserSession } from '../../scout/browser.js';
+
+export class PlaywrightExecutionWorker implements ExecutionWorker {
+  private readonly activeSessions = new Map<string, BrowserSession>();
+  private closed = false;
+
+  async executeRun(input: ExecutionWorkerInput): Promise<ExecutionWorkerResult> {
+    if (this.closed) {
+      throw new Error('PlaywrightExecutionWorker is closed.');
+    }
+
+    // 1. Mandatory Preflight Safety Gate verification before launching Playwright
+    const preflight = validateProductTargetPreflight(input.target, [input.journey]);
+    if (preflight.status !== 'ready') {
+      // PREFLIGHT BLOCKED: Launch ZERO browsers. Issue ZERO target requests.
+      const failureReason = preflight.failureReasons.join('; ') || 'Preflight safety check failed.';
+      return {
+        status: 'failed',
+        passedSteps: 0,
+        totalSteps: 0,
+        failureReason,
+      };
+    }
+
+    // 2. Cancellation check before browser launch
+    if (input.cancellationSignal?.aborted) {
+      return {
+        status: 'cancelled',
+        passedSteps: 0,
+        totalSteps: 0,
+        failureReason: 'Run was cancelled before browser launch.',
+      };
+    }
+
+    // 3. Resolve JourneyPlan
+    const plan: JourneyPlan = (input.journey as any).plan ?? {
+      schemaVersion: '1.0',
+      goal: input.journey.goal,
+      normalizedGoal: input.journey.goal.toLowerCase().trim(),
+      journeyType: 'custom',
+      target: {
+        url: input.target.targetUrl,
+        finalUrl: input.target.targetUrl,
+        title: input.target.name,
+      },
+      steps: (input.journey as any).steps ?? [
+        {
+          id: 'step-001',
+          order: 1,
+          intent: 'navigate_to_target',
+          action: 'navigate',
+          description: `Navigate to target ${input.target.targetUrl}`,
+          target: { type: 'url', value: input.target.targetUrl },
+          executable: true,
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      missingInformation: [],
+      planner: { mode: 'heuristic', version: '0.1.0' },
+    };
+
+    let session: BrowserSession | null = null;
+    let abortListener: (() => void) | null = null;
+
+    try {
+      // 4. Launch fresh browser session
+      session = await openBrowserSession({
+        headless: true,
+        slowMoMs: 0,
+        ignoreHttpsErrors: false,
+        viewport: { width: 1280, height: 800 },
+      });
+      this.activeSessions.set(input.runId, session);
+
+      // Handle cancellation during active session
+      if (input.cancellationSignal) {
+        abortListener = () => {
+          if (session) {
+            session.close().catch(() => {});
+          }
+        };
+        input.cancellationSignal.addEventListener('abort', abortListener);
+      }
+
+      if (input.cancellationSignal?.aborted) {
+        return {
+          status: 'cancelled',
+          passedSteps: 0,
+          totalSteps: plan.steps.length,
+          failureReason: 'Run was cancelled after browser launch.',
+        };
+      }
+
+      // 5. Execute journey plan using proven Build 3 execution engine
+      const execReport = await executeJourney({
+        plan,
+        planPath: `journeys/${input.journey.id}.json`,
+        safeTestMode: true,
+        headed: false,
+        screenshots: true,
+        provenance: {
+          environmentId: input.target.environment,
+          appBuildId: input.target.appBuildId,
+        },
+      });
+
+      // 6. Build anomaly classification report
+      const anomalyReport = buildAnomalyReport({
+        execution: execReport,
+        executionPath: `runs/${input.runId}/execution.json`,
+        journey: plan,
+        journeyPath: `journeys/${input.journey.id}.json`,
+      });
+
+      // 7. Format artifacts for storage
+      const artifacts: WorkerArtifactPayload[] = [
+        {
+          type: 'execution',
+          relativePath: `runs/${input.runId}/execution.json`,
+          contentType: 'application/json',
+          payload: Buffer.from(JSON.stringify(execReport, null, 2), 'utf8'),
+        },
+        {
+          type: 'anomalies',
+          relativePath: `runs/${input.runId}/anomalies.json`,
+          contentType: 'application/json',
+          payload: Buffer.from(JSON.stringify(anomalyReport, null, 2), 'utf8'),
+        },
+        {
+          type: 'log',
+          relativePath: `runs/${input.runId}/execution.log`,
+          contentType: 'text/plain',
+          payload: Buffer.from(
+            `[RUN ${input.runId}] Journey: "${input.journey.id}" | Status: ${execReport.status} | Steps: ${execReport.stepCounts.passed}/${execReport.stepCounts.total}\n`,
+            'utf8',
+          ),
+        },
+      ];
+
+      const isCompleted = execReport.status === 'completed' || execReport.status === 'passed';
+      const isPartial = execReport.status === 'partial';
+
+      return {
+        status: isCompleted ? 'completed' : isPartial ? 'partial' : 'failed',
+        passedSteps: execReport.stepCounts.passed,
+        totalSteps: execReport.stepCounts.total,
+        failureReason: execReport.status === 'failed' ? 'Execution reported step failures.' : undefined,
+        artifacts,
+        summary: {
+          executionStatus: execReport.status,
+          anomaliesCount: anomalyReport.summary.totalSignals,
+          safeTestMode: true,
+          confirmedBug: false,
+        },
+      };
+    } catch (err) {
+      if (input.cancellationSignal?.aborted) {
+        return {
+          status: 'cancelled',
+          passedSteps: 0,
+          totalSteps: plan.steps.length,
+          failureReason: 'Run was cancelled.',
+        };
+      }
+      return {
+        status: 'failed',
+        passedSteps: 0,
+        totalSteps: plan.steps.length,
+        failureReason: (err as Error).message,
+      };
+    } finally {
+      if (input.cancellationSignal && abortListener) {
+        input.cancellationSignal.removeEventListener('abort', abortListener);
+      }
+      this.activeSessions.delete(input.runId);
+      if (session) {
+        try {
+          await session.close();
+        } catch {
+          // Guaranteed cleanup
+        }
+      }
+    }
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    const session = this.activeSessions.get(runId);
+    if (session) {
+      try {
+        await session.close();
+      } catch {
+        // Safe disposal
+      }
+      this.activeSessions.delete(runId);
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const [runId, session] of this.activeSessions) {
+      try {
+        await session.close();
+      } catch {
+        // Safe disposal
+      }
+    }
+    this.activeSessions.clear();
+  }
+}

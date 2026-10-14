@@ -40,6 +40,7 @@ import { WORKER_USAGE, runWorkerCommand } from './cli/workerCommand.js';
 import { DASHBOARD_USAGE, runDashboardCommand } from './cli/dashboardCommand.js';
 import { runStorageCheckCommand } from './cli/storageCheckCommand.js';
 import { runStorageSetupCommand } from './cli/storageSetupCommand.js';
+import { runStorageSmokeCommand } from './cli/storageSmokeCommand.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -84,6 +85,7 @@ Usage:
   npm run auth:check
   npm run storage:check
   npm run storage:setup -- --confirm
+  npm run storage:smoke
   npm run worker [options]
   npm run dashboard [options]
 
@@ -107,7 +109,8 @@ Commands:
   auth:check     Verify authentication mode and storage configuration (Build 12B.1)
   storage:check  Verify artifact storage configuration & bucket reachability (Build 12D.2A)
   storage:setup  Explicitly initialize private Supabase Storage bucket (Build 12D.2A)
-  worker         Run asynchronous background queue worker (Build 12B.2B)
+  storage:smoke  Verify Supabase Storage upload, download, and deletion lifecycle (Build 12D.2B)
+  worker         Run asynchronous background queue worker (Build 12D.2B)
   dashboard      Start local authenticated Product Dashboard (Build 12C.1)
   help           Show this message
   version        Print the build version
@@ -494,6 +497,11 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
 
   if (first === 'storage:setup') {
     const res = await runStorageSetupCommand(rest);
+    return res.code;
+  }
+
+  if (first === 'storage:smoke') {
+    const res = await runStorageSmokeCommand(rest);
     return res.code;
   }
 
