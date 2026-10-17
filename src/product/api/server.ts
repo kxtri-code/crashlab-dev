@@ -68,7 +68,11 @@ export class ProductApiServer {
   private activePort: number | null = null;
 
   constructor(options: ProductApiServerOptions) {
-    this.host = options.host ?? process.env.HOST ?? '127.0.0.1';
+    const defaultHost =
+      process.env.NODE_ENV === 'production' || process.env.PRODUCT_AUTH_MODE === 'production'
+        ? '0.0.0.0'
+        : '127.0.0.1';
+    this.host = options.host ?? process.env.HOST ?? defaultHost;
     this.port = options.port ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : 0);
 
     // 1. Resolve repositories & service

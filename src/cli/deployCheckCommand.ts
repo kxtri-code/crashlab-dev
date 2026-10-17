@@ -146,7 +146,9 @@ export function checkDeploymentConfiguration(
 
   // 8. SUPABASE_JWT_ISSUER
   const jwtIssuer = env.SUPABASE_JWT_ISSUER?.trim();
-  if (jwtIssuer) {
+  if (role === 'worker') {
+    statuses['SUPABASE_JWT_ISSUER'] = '[not required for worker service]';
+  } else if (jwtIssuer) {
     statuses['SUPABASE_JWT_ISSUER'] = `[configured: ${jwtIssuer.length} chars]`;
   } else {
     statuses['SUPABASE_JWT_ISSUER'] = '[FAIL: not configured]';
@@ -155,7 +157,9 @@ export function checkDeploymentConfiguration(
 
   // 9. SUPABASE_JWKS_URL
   const jwksUrl = env.SUPABASE_JWKS_URL?.trim();
-  if (jwksUrl) {
+  if (role === 'worker') {
+    statuses['SUPABASE_JWKS_URL'] = '[not required for worker service]';
+  } else if (jwksUrl) {
     try {
       const parsed = new URL(jwksUrl);
       statuses['SUPABASE_JWKS_URL'] = `[configured: host=${parsed.host}]`;
@@ -170,10 +174,12 @@ export function checkDeploymentConfiguration(
 
   // 10. PRODUCT_CORS_ALLOWED_ORIGINS
   const corsRaw = env.PRODUCT_CORS_ALLOWED_ORIGINS?.trim();
-  if (!corsRaw || corsRaw === '*') {
-    statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] = `[FAIL: ${corsRaw === '*' ? 'wildcard "*" prohibited' : 'not configured'}]`;
-    errors.push('PRODUCT_CORS_ALLOWED_ORIGINS cannot be empty or wildcard "*" in production');
-  } else {
+  if (role === 'worker') {
+    statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] = '[not required for worker service]';
+  } else if (corsRaw === '*') {
+    statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] = '[FAIL: wildcard "*" prohibited]';
+    errors.push('PRODUCT_CORS_ALLOWED_ORIGINS cannot be wildcard "*" in production');
+  } else if (corsRaw) {
     const origins = corsRaw.split(',').map((o) => o.trim()).filter(Boolean);
     if (origins.length === 0 || origins.includes('*')) {
       statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] = '[FAIL: wildcard prohibited]';
@@ -181,6 +187,10 @@ export function checkDeploymentConfiguration(
     } else {
       statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] = `[configured: ${origins.length} origin(s)]`;
     }
+  } else {
+    // Unset or empty: Same-origin requests work without CORS (dashboard served by same API process)
+    statuses['PRODUCT_CORS_ALLOWED_ORIGINS'] =
+      '[configured: same-origin only (safe for self-hosted dashboard; set if hosting on external domain)]';
   }
 
   // 11. PRODUCT_WORKER_ENABLED role verification

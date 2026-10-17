@@ -87,20 +87,27 @@ We evaluate the two candidate architectures:
 ---
 
 ### Step 2: Configure Supabase Database & Run Migrations
-Before starting web or worker containers, the database schema must be initialized.
+Before starting web or worker containers on Render, the database schema must be initialized.
 
-1. Ensure your Supabase project is active.
+1. Ensure your Supabase project is active and accessible.
 2. Note your connection pooling string from **Project Settings > Database > Connection String (NodeJS / Transaction Pooler)**.
 3. Apply schema migrations manually from your administrative environment:
    ```bash
    node --env-file=.env --import tsx src/cli.ts db:migrate
+   # Alternatively: npm run db:migrate
    ```
-4. Verify migration status:
+   This executes all pending SQL migration files in order:
+   - `migrations/001_initial_product_schema.sql` (entities: workspaces, projects, environments, journeys, baselines)
+   - `migrations/002_run_queue.sql` (execution queue and run lease coordination)
+4. Confirm migrations 001 and 002 are applied before Render services start:
    ```bash
    node --env-file=.env --import tsx src/cli.ts db:check
    ```
-   > [!IMPORTANT]
-   > CrashLab strictly enforces that **no database migrations run automatically during HTTP requests or web server boot**. Migrations are always an explicit administrative action.
+   Expect: `Database is up to date (2 migrations already applied)`.
+
+> [!IMPORTANT]
+> **No Automatic Migrations Invariant:**
+> CrashLab strictly enforces that **no database migrations run automatically during HTTP requests or web/worker container startup**. Migrations are always an explicit administrative action to prevent race conditions across distributed containers. Do not reference any monolithic schema file; migrations 001 and 002 are authoritative.
 
 ---
 
@@ -160,20 +167,27 @@ If configuring manually without Blueprints:
 | Variable Name | Recommended Value | Description | Sensitivity |
 | :--- | :--- | :--- | :--- |
 | `NODE_ENV` | `production` | Enables production optimizations | Public |
-| `HOST` | `0.0.0.0` | Binds to all network interfaces | Public |
-| `PORT` | `10000` | Port assigned by Render (or default 3220) | Public |
-| `PRODUCT_AUTH_MODE` | `production` | Enforces JWT token verification | Public |
+| `HOST` | `0.0.0.0` | Binds to all network interfaces (defaults safely to 0.0.0.0 in production) | Public |
+| `PORT` | *(Injected by Render)* | Port assigned dynamically by Render (defaults to 3220 locally; do not hardcode) | Public |
+| `PRODUCT_AUTH_MODE` | `production` | Enforces Supabase JWT token verification | Public |
 | `PRODUCT_STORAGE` | `postgres` | Uses PostgreSQL for entities & queue | Public |
-| `PRODUCT_BLOB_STORE` | `supabase` | Uses private Supabase Storage | Public |
-| `PRODUCT_WORKER_ENABLED` | `false` | **MUST BE FALSE** on API service | Public |
+| `PRODUCT_BLOB_STORE` | `supabase` | Uses private Supabase Storage (required in production) | Public |
+| `PRODUCT_WORKER_ENABLED` | `false` | **MUST BE FALSE** on API service (API never runs worker loop) | Public |
 | `SUPABASE_STORAGE_BUCKET`| `crashlab-artifacts` | Storage bucket name | Public |
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` | Expected audience claim in JWT | Public |
 | `DATABASE_URL` | `postgresql://postgres.[ref]:[pass]@...` | PostgreSQL connection string | **SECRET (Never commit)** |
 | `SUPABASE_URL` | `https://[ref].supabase.co` | Supabase project API URL | Configuration |
-| `SUPABASE_SERVICE_ROLE_KEY` | `eyJh...` | Supabase service-role secret key | **SECRET (Never commit)** |
+| `SUPABASE_SERVICE_ROLE_KEY` | `eyJh...` | Server-only Supabase service-role secret key | **SECRET (Never commit)** |
 | `SUPABASE_JWT_ISSUER` | `https://[ref].supabase.co/auth/v1` | Supabase JWT issuer | Configuration |
 | `SUPABASE_JWKS_URL` | `https://[ref].supabase.co/auth/v1/.well-known/jwks.json` | JWKS public key endpoint | Configuration |
-| `PRODUCT_CORS_ALLOWED_ORIGINS` | `https://crashlab-api.onrender.com` | Allowed browser origins (no `*`) | Configuration |
+| `PRODUCT_CORS_ALLOWED_ORIGINS` | *(Optional or external origin)* | Allowed browser origins (no `*`). Same-origin dashboard does not require CORS | Configuration |
+
+> [!NOTE]
+> **Production CORS Rules:**
+> - The CrashLab dashboard is served directly by `crashlab-api` at the same origin (`https://crashlab-api.onrender.com`). Same-origin browser requests do not require CORS headers.
+> - If you deploy a separate frontend on an external domain (e.g. `https://app.yourdomain.com`), set `PRODUCT_CORS_ALLOWED_ORIGINS` to that exact domain.
+> - Wildcard CORS (`*`) is strictly rejected and fails closed.
+> - **Do NOT use `https://dashboard.render.com`** (that is Render's platform management dashboard, not your product application).
 
 ### 4.2 Background Worker Fleet (`crashlab-worker`)
 
@@ -181,17 +195,21 @@ If configuring manually without Blueprints:
 | :--- | :--- | :--- | :--- |
 | `NODE_ENV` | `production` | Production mode | Public |
 | `PRODUCT_WORKER_ENABLED` | `true` | **MUST BE TRUE** to process runs | Public |
-| `PRODUCT_WORKER_ID` | `worker-render-01` | Unique safe worker identifier | Public |
-| `PRODUCT_WORKER_MAX_CONCURRENCY` | `1` | Max simultaneous browser runs | Public |
-| `PRODUCT_WORKER_POLL_MS` | `1000` | Polling frequency in ms | Public |
+| `PRODUCT_WORKER_ID` | `worker-render-01` | Unique safe worker identifier (matches `PRODUCT_WORKER_ID`) | Public |
+| `PRODUCT_WORKER_MAX_CONCURRENCY` | `1` | Max simultaneous browser runs (bounded to 1 for private beta) | Public |
+| `PRODUCT_WORKER_POLL_MS` | `1000` | Polling frequency in ms (100..60000) | Public |
 | `PRODUCT_WORKER_LEASE_SECONDS` | `60` | Lease duration before timeout | Public |
 | `PRODUCT_AUTH_MODE` | `production` | Production mode | Public |
 | `PRODUCT_STORAGE` | `postgres` | PostgreSQL queue storage | Public |
-| `PRODUCT_BLOB_STORE` | `supabase` | Supabase artifact storage | Public |
+| `PRODUCT_BLOB_STORE` | `supabase` | Supabase artifact storage (required in production) | Public |
 | `SUPABASE_STORAGE_BUCKET`| `crashlab-artifacts` | Bucket name | Public |
 | `DATABASE_URL` | `postgresql://postgres.[ref]:[pass]@...` | PostgreSQL connection string | **SECRET (Never commit)** |
 | `SUPABASE_URL` | `https://[ref].supabase.co` | Supabase project API URL | Configuration |
-| `SUPABASE_SERVICE_ROLE_KEY` | `eyJh...` | Supabase service-role secret key | **SECRET (Never commit)** |
+| `SUPABASE_SERVICE_ROLE_KEY` | `eyJh...` | Server-only Supabase service-role secret key | **SECRET (Never commit)** |
+
+> [!NOTE]
+> **Worker Variable Consistency:**
+> The worker exclusively reads configuration variables conforming to the `PRODUCT_WORKER_*` schema. Non-existent variable names such as `CRASHLAB_WORKER_ID` or `CRASHLAB_HEADLESS` are not used by the worker service and must not be configured in `render.yaml`.
 
 > [!CAUTION]
 > **Zero-Commit Policy:**
@@ -200,6 +218,16 @@ If configuring manually without Blueprints:
 ---
 
 ## 5. Verification & Health Probes
+
+### 5.0 Docker Container Build Status
+The container definitions (`Dockerfile.api`, `Dockerfile.worker`, and `.dockerignore`) have been validated via automated static assertions in the test suite:
+- Excludes `.env`, `reports`, `coverage`, and credentials.
+- Compiles production TypeScript into `dist/` before running.
+- Runs under non-root user `node`.
+- API binds `0.0.0.0` and honors `$PORT`.
+- Worker installs Chromium dependencies and has zero ingress.
+
+*Note on Local vs. Cloud Builds:* Because the local developer machine did not have a running Docker daemon, local container images were not compiled. The image builds remain to be executed and verified by Render's native cloud Docker builder upon initial deployment.
 
 ### 5.1 Preflight Deployment Check
 Before deploying, execute the deployment configuration verification tool locally:
