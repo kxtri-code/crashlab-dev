@@ -3,13 +3,32 @@
 # Packages the CrashLab queue worker as a standalone, deployable service
 # separated completely from the Product API web server.
 #
-# Invariants:
-# - Runs as non-root user (node).
-# - Playwright Chromium dependencies installed cleanly.
-# - Zero secrets (.env, credentials) baked into the image.
-# - Shuts down gracefully on SIGTERM.
-# - Internal health check endpoint on port 3230.
+# Multi-stage build:
+# - Stage 1 (builder): Installs all dependencies (including typescript) and compiles TypeScript to dist/
+# - Stage 2 (runtime): Installs only production dependencies, downloads Chromium, and runs worker
 
+# -----------------------------------------------------------------------------
+# 1. Builder Stage
+# -----------------------------------------------------------------------------
+FROM node:20-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Copy package manifests and TypeScript configuration
+COPY package*.json tsconfig*.json ./
+
+# Install ALL dependencies (including TypeScript compiler and types)
+RUN npm ci
+
+# Copy application source code
+COPY src/ ./src/
+
+# Compile TypeScript to JavaScript distribution (dist/)
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# 2. Runtime Stage
+# -----------------------------------------------------------------------------
 FROM node:20-bookworm-slim
 
 # Install system dependencies required for headless Chromium and health probes
@@ -40,18 +59,15 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
     NODE_ENV=production \
     PRODUCT_WORKER_HEALTH_PORT=3230
 
-# Install Playwright browser binary
+# Prepare cache directories for non-root node user
 RUN mkdir -p /home/node/.cache/ms-playwright && chown -R node:node /home/node
 
-# Copy package manifests and build dependencies
-COPY package*.json tsconfig*.json ./
-RUN npm ci
+# Copy package manifests and install ONLY production dependencies
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Copy application source code
-COPY src/ ./src/
-
-# Compile TypeScript to JavaScript distribution
-RUN npm run build
+# Copy compiled distribution from builder stage
+COPY --from=builder /app/dist ./dist
 
 # Install Chromium as node user
 USER node

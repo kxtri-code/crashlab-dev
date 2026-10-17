@@ -440,7 +440,10 @@ describe('Build 12E: Render Private-Beta Deployment Package', () => {
       expect(existsSync(dockerfilePath)).toBe(true);
 
       const content = readFileSync(dockerfilePath, 'utf8');
-      expect(content).toContain('FROM node:20-bookworm-slim');
+      expect(content).toContain('FROM node:20-bookworm-slim AS builder');
+      expect(content).toContain('RUN npm ci');
+      expect(content).toContain('RUN npm run build');
+      expect(content).toContain('RUN npm ci --omit=dev');
       expect(content).toContain('USER node');
       expect(content).toContain('dist/product/api/main.js');
       expect(content).toContain('PRODUCT_WORKER_ENABLED=false');
@@ -453,7 +456,10 @@ describe('Build 12E: Render Private-Beta Deployment Package', () => {
       expect(existsSync(dockerfilePath)).toBe(true);
 
       const content = readFileSync(dockerfilePath, 'utf8');
-      expect(content).toContain('FROM node:20-bookworm-slim');
+      expect(content).toContain('FROM node:20-bookworm-slim AS builder');
+      expect(content).toContain('RUN npm ci');
+      expect(content).toContain('RUN npm run build');
+      expect(content).toContain('RUN npm ci --omit=dev');
       expect(content).toContain('USER node');
       expect(content).toContain('playwright install chromium');
       expect(content).toContain('dist/product/worker/main.js');
