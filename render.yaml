@@ -1,0 +1,90 @@
+# render.yaml — CrashLab Private-Beta Deployment Blueprint (Build 12E)
+#
+# Deploys:
+# 1. crashlab-api: Render Web Service (Dockerfile.api) for Product API and Dashboard
+# 2. crashlab-worker: Render Background Worker (Dockerfile.worker) for asynchronous execution
+#
+# Security & Zero-Secret Guarantees:
+# - ZERO secrets are hardcoded in this blueprint.
+# - All sensitive credentials use `sync: false` and must be provided via the Render dashboard.
+# - Uses existing Supabase PostgreSQL database and private Supabase Storage bucket.
+# - Zero external target websites are contacted during deployment.
+# - API process never runs workers or launches browsers.
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Product API & Dashboard Web Service
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: crashlab-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PRODUCT_AUTH_MODE
+        value: production
+      - key: PRODUCT_STORAGE
+        value: postgres
+      - key: PRODUCT_BLOB_STORE
+        value: supabase
+      - key: PRODUCT_WORKER_ENABLED
+        value: "false"
+      - key: SUPABASE_STORAGE_BUCKET
+        value: crashlab-artifacts
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      # Server secrets to be configured in Render Dashboard (sync: false)
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_ISSUER
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: PRODUCT_CORS_ALLOWED_ORIGINS
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # 2. CrashLab Execution Worker Fleet (Background Worker)
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: crashlab-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    plan: starter # Chromium requires at least Starter (512MB-1GB RAM)
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PRODUCT_WORKER_ENABLED
+        value: "true"
+      - key: PRODUCT_WORKER_ID
+        value: worker-render-01
+      - key: PRODUCT_WORKER_MAX_CONCURRENCY
+        value: "1"
+      - key: PRODUCT_WORKER_POLL_MS
+        value: "1000"
+      - key: PRODUCT_WORKER_LEASE_SECONDS
+        value: "60"
+      - key: PRODUCT_AUTH_MODE
+        value: production
+      - key: PRODUCT_STORAGE
+        value: postgres
+      - key: PRODUCT_BLOB_STORE
+        value: supabase
+      - key: SUPABASE_STORAGE_BUCKET
+        value: crashlab-artifacts
+      # Server secrets to be configured in Render Dashboard (sync: false)
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

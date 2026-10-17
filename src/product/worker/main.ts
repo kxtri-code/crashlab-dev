@@ -230,9 +230,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 }
 
 // Direct execution guard
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('worker/main.ts') ||
-  process.argv[1].endsWith('worker/main.js')
+const normalizedArgv1 = process.argv[1]?.replace(/\\/g, '/') || '';
+const isMain = Boolean(
+  normalizedArgv1 && (
+    normalizedArgv1.endsWith('worker/main.ts') ||
+    normalizedArgv1.endsWith('worker/main.js')
+  )
 );
 
 if (isMain) {

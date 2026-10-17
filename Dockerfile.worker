@@ -38,7 +38,6 @@ WORKDIR /app
 # Ensure writable temporary directories for Playwright and Chromium caches
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
     NODE_ENV=production \
-    PRODUCT_WORKER_ENABLED=true \
     PRODUCT_WORKER_HEALTH_PORT=3230
 
 # Install Playwright browser binary
@@ -66,4 +65,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 3230
 
 # Dedicated worker entry point
-CMD ["node", "dist/src/product/worker/main.js"]
+CMD ["node", "dist/product/worker/main.js"]

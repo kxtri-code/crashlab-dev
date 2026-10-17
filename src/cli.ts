@@ -41,6 +41,8 @@ import { DASHBOARD_USAGE, runDashboardCommand } from './cli/dashboardCommand.js'
 import { runStorageCheckCommand } from './cli/storageCheckCommand.js';
 import { runStorageSetupCommand } from './cli/storageSetupCommand.js';
 import { runStorageSmokeCommand } from './cli/storageSmokeCommand.js';
+import { DEPLOY_CHECK_USAGE, runDeployCheckCommand } from './cli/deployCheckCommand.js';
+import { API_CLI_USAGE, main as runApiCommand } from './product/api/main.js';
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
@@ -112,6 +114,8 @@ Commands:
   storage:smoke  Verify Supabase Storage upload, download, and deletion lifecycle (Build 12D.2B)
   worker         Run asynchronous background queue worker (Build 12D.2B)
   dashboard      Start local authenticated Product Dashboard (Build 12C.1)
+  deploy:check   Verify deployment environment configuration safety for Render (Build 12E)
+  api            Start production Product API & Dashboard server (Build 12E)
   help           Show this message
   version        Print the build version
 
@@ -503,6 +507,19 @@ export async function dispatch(argv: readonly string[]): Promise<number> {
   if (first === 'storage:smoke') {
     const res = await runStorageSmokeCommand(rest);
     return res.code;
+  }
+
+  if (first === 'deploy:check') {
+    const res = await runDeployCheckCommand(rest);
+    return res.code;
+  }
+
+  if (first === 'api') {
+    if (wantsHelp(rest)) {
+      console.log(API_CLI_USAGE);
+      return 0;
+    }
+    return runApiCommand(rest);
   }
 
   return main([...argv]);

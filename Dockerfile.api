@@ -1,0 +1,51 @@
+# Dockerfile.api — CrashLab Product API & Dashboard Service (Build 12E)
+#
+# Packages the CrashLab Product API and Dashboard as a standalone, production-ready
+# web service for Render.
+#
+# Invariants:
+# - Runs as non-root user (node).
+# - Zero browser / Playwright execution in the API process.
+# - Zero secrets (.env, credentials) baked into the image.
+# - Never executes database migrations during HTTP requests or startup.
+# - Binds to 0.0.0.0 and honors $PORT.
+# - Shuts down gracefully on SIGTERM/SIGINT.
+
+FROM node:20-bookworm-slim
+
+# Install system dependencies required for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Configure production environment defaults
+ENV NODE_ENV=production \
+    PORT=3220 \
+    HOST=0.0.0.0 \
+    PRODUCT_WORKER_ENABLED=false
+
+# Copy package manifests and install production dependencies
+COPY package*.json tsconfig*.json ./
+RUN npm ci
+
+# Copy application source code
+COPY src/ ./src/
+
+# Compile TypeScript to JavaScript distribution
+RUN npm run build
+
+# Switch to non-root user
+USER node
+
+# Health check probe against local port
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-3220}/health || exit 1
+
+# Expose HTTP port
+EXPOSE 3220
+
+# Run compiled production API server
+CMD ["node", "dist/product/api/main.js"]

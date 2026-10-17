@@ -28,11 +28,14 @@ export interface ApiErrorResponse {
 
 export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 
+export const DEFAULT_PRODUCT_API_PORT = 3220;
+export const DEFAULT_PRODUCT_API_HOST = '0.0.0.0';
+
 export interface HealthResponse {
   readonly status: 'ok';
   readonly version: string;
   readonly appEnvironment: string;
-  readonly mode: 'hosted-mvp-foundation';
+  readonly mode: 'hosted-mvp-foundation' | 'hosted-beta' | string;
   readonly requestId?: string;
 }
 

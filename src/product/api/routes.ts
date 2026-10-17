@@ -20,10 +20,11 @@ import {
 } from '../service/productService.js';
 import type { ApiResponse, HealthResponse } from './types.js';
 import type { AuthConfig } from '../auth/identity.js';
-import { loadAuthConfigFromEnv } from '../auth/identity.js';
+import { loadAuthConfigFromEnv, validateProductionAuthConfig } from '../auth/identity.js';
 import { authenticateRequest } from '../auth/middleware.js';
 import type { ArtifactType } from '../types/artifact.js';
 import type { IdGenerator } from '../util/id.js';
+import { STYLES_CSS, CLIENT_JS_BUNDLE, renderDashboardHtmlShell } from '../dashboard/index.js';
 
 export class PayloadTooLargeError extends Error {
   constructor(message: string) {
@@ -40,6 +41,7 @@ export interface RouteHandlerContext {
   readonly allowedOrigins?: readonly string[];
   readonly maxRequestBodyBytes?: number;
   readonly maxArtifactBytes?: number;
+  readonly serveDashboard?: boolean;
 }
 
 
@@ -195,7 +197,12 @@ export async function handleProductApiRequest(
   if ((pathname === '/readiness' || pathname === '/api/v1/readiness') && method === 'GET') {
     const dbOk = await context.service.checkDatabaseConnectivity();
     const storageOk = await context.service.checkStorageReadiness();
-    const isReady = dbOk && storageOk;
+    let authOk = true;
+    if (isProduction) {
+      const authValidation = validateProductionAuthConfig(process.env);
+      authOk = authValidation.valid;
+    }
+    const isReady = dbOk && storageOk && authOk;
     sendJson(
       res,
       isReady ? 200 : 503,
@@ -203,12 +210,54 @@ export async function handleProductApiRequest(
         status: isReady ? 'ready' : 'not_ready',
         database: dbOk ? 'connected' : 'unreachable',
         storage: storageOk ? 'ready' : 'unreachable',
+        checks: {
+          database: dbOk ? 'connected' : 'unreachable',
+          storage: storageOk ? 'ready' : 'unreachable',
+        },
         requestId: fallbackRequestId,
       },
       fallbackRequestId,
       corsHeaders,
     );
     return;
+  }
+
+  // 1.8 Dashboard UI static assets (when serveDashboard is enabled)
+  if (context.serveDashboard && (method === 'GET' || method === 'HEAD')) {
+    if (pathname === '/styles.css') {
+      res.writeHead(200, {
+        'content-type': 'text/css; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(method === 'HEAD' ? undefined : STYLES_CSS);
+      return;
+    }
+    if (pathname === '/app.js') {
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(method === 'HEAD' ? undefined : CLIENT_JS_BUNDLE);
+      return;
+    }
+    if (
+      pathname === '/' ||
+      pathname === '/index.html' ||
+      (!pathname.startsWith('/api/') && !pathname.startsWith('/health') && !pathname.startsWith('/readiness'))
+    ) {
+      const html = renderDashboardHtmlShell({ apiUrl: '' });
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy':
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws:; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self';",
+      });
+      res.end(method === 'HEAD' ? undefined : html);
+      return;
+    }
   }
 
   // 2. Authentication Enforcement

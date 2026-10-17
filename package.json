@@ -39,6 +39,8 @@
     "storage:smoke": "tsx src/cli.ts storage:smoke",
     "worker": "tsx src/cli.ts worker",
     "dashboard": "tsx src/cli.ts dashboard",
+    "deploy:check": "tsx src/cli.ts deploy:check",
+    "api": "tsx src/cli.ts api",
     "setup": "playwright install chromium",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

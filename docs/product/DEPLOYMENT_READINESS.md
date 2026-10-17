@@ -151,11 +151,21 @@ An audit of the dashboard frontend bundle confirms:
 
 ---
 
-## 8. What Remains Before Public Launch
+## 8. Render Private-Beta Deployment Package (Build 12E)
+
+The private-beta deployment package is established:
+- **Render Web Service:** Product API and Dashboard deployed via `Dockerfile.api`.
+- **Render Background Worker:** Execution worker fleet deployed via `Dockerfile.worker`.
+- **Blueprint Automation:** `render.yaml` specifies infrastructure with zero hardcoded secrets.
+- **Preflight Verification:** `npm run deploy:check` verifies production readiness safely.
+- **Operations Manual:** See [RENDER_DEPLOYMENT.md](file:///c:/Users/kxtri/Crash-labs/docs/product/RENDER_DEPLOYMENT.md) for full operational instructions.
+
+---
+
+## 9. What Remains Before Public Launch
 
 Before moving from private beta to general public availability, the following milestones remain:
-1. **Actual Cloud Hosting Selection & Live Deployment:** Selecting the deployment platform (e.g., Render, Fly.io, Railway, AWS ECS) and provisioning production web/worker containers.
-2. **Server-Sent Events (SSE):** Real-time run progress and queue monitoring via SSE.
-3. **Self-Service User Provisioning:** Automated user onboarding and organization invitation workflows with Supabase Auth hooks.
-4. **Production Rate Limiting:** Global and per-workspace token bucket rate limiting on public API endpoints.
-5. **Automated Backup & Disaster Recovery:** Continuous database replication and artifact backup verification.
+1. **Server-Sent Events (SSE):** Real-time run progress and queue monitoring via SSE.
+2. **Self-Service User Provisioning:** Automated user onboarding and organization invitation workflows with Supabase Auth hooks.
+3. **Production Rate Limiting:** Global and per-workspace token bucket rate limiting on public API endpoints.
+4. **Automated Backup & Disaster Recovery:** Continuous database replication and artifact backup verification.

@@ -207,9 +207,18 @@ This non-destructive test operates exclusively against a designated test locator
 
 ---
 
-## 11. Remaining Production Blockers
+## 11. Render Deployment Integration (Build 12E)
 
-1. **Production Worker Deployment:** Deploying the containerized worker fleet to a private VPC / cluster (AWS ECS, Fly.io, or GCP Cloud Run).
-2. **Rate Limiting:** Public API token bucket limits.
-3. **Queue Telemetry & Streaming:** Real-time run queue progress via Server-Sent Events (SSE).
-4. **Backup & Retention Policies:** Automatic archival for large Playwright traces.
+The CrashLab Worker Fleet is packaged and configured for deployment as a **Render Background Worker**:
+- **Packaging:** `Dockerfile.worker` builds a non-root image with Chromium and system libraries.
+- **Render Service Type:** Background Worker (zero public/private ingress ports, OS process supervision).
+- **Environment Policy:** `PRODUCT_WORKER_ENABLED=true` is set exclusively via Render environment variables.
+- **Operations Manual:** See [RENDER_DEPLOYMENT.md](file:///c:/Users/kxtri/Crash-labs/docs/product/RENDER_DEPLOYMENT.md) for full deployment instructions and environment configuration.
+
+---
+
+## 12. Remaining Production Blockers
+
+1. **Production Rate Limiting:** Public API token bucket limits.
+2. **Queue Telemetry & Streaming:** Real-time run queue progress via Server-Sent Events (SSE).
+3. **Backup & Retention Policies:** Automatic archival for large Playwright traces.

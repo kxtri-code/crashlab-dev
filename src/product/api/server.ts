@@ -53,6 +53,7 @@ export interface ProductApiServerOptions {
   readonly corsAllowedOrigins?: readonly string[];
   readonly maxRequestBodyBytes?: number;
   readonly maxArtifactBytes?: number;
+  readonly serveDashboard?: boolean;
 }
 
 
@@ -67,8 +68,8 @@ export class ProductApiServer {
   private activePort: number | null = null;
 
   constructor(options: ProductApiServerOptions) {
-    this.host = options.host ?? '127.0.0.1';
-    this.port = options.port ?? 0;
+    this.host = options.host ?? process.env.HOST ?? '127.0.0.1';
+    this.port = options.port ?? (process.env.PORT ? parseInt(process.env.PORT, 10) : 0);
 
     // 1. Resolve repositories & service
     if (options.service) {
@@ -139,6 +140,7 @@ export class ProductApiServer {
       allowedOrigins: options.allowedOrigins ?? options.corsAllowedOrigins,
       maxRequestBodyBytes: options.maxRequestBodyBytes,
       maxArtifactBytes: options.maxArtifactBytes,
+      serveDashboard: options.serveDashboard,
     };
 
 
