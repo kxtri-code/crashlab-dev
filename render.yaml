@@ -49,6 +49,8 @@ services:
         sync: false
       - key: SUPABASE_JWKS_URL
         sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
       - key: PRODUCT_CORS_ALLOWED_ORIGINS
         sync: false
 

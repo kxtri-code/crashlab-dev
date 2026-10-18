@@ -31,6 +31,10 @@ export const CLIENT_JS_BUNDLE: string = `
   const state = {
     token: null,
     apiUrl: '',
+    authMode: 'development',
+    supabaseUrl: '',
+    supabaseAnonKey: '',
+    authSubmitting: false,
     currentUser: null,
     workspaces: [],
     currentWorkspace: null,
@@ -543,6 +547,64 @@ export const CLIENT_JS_BUNDLE: string = `
   }
 
   function renderAuthView() {
+    if (state.authMode === 'production') {
+      return renderProductionAuthView();
+    }
+    return renderDevelopmentAuthView();
+  }
+
+  function renderProductionAuthView() {
+    const errorHtml = state.error
+      ? \`<div id="auth-error-banner" style="color:var(--status-failed);background:rgba(239,68,68,0.1);padding:0.6rem;border-radius:6px;margin-bottom:1rem;font-size:0.85rem;">\${escapeHtml(state.error)}</div>\`
+      : '';
+
+    const needsAnonKey = !state.supabaseAnonKey;
+    const needsUrl = !state.supabaseUrl;
+
+    return \`
+      <div class="auth-wrapper">
+        <div class="auth-card">
+          <div class="auth-header">
+            <h2 style="font-size:1.5rem;font-weight:700;margin-bottom:0.5rem;">CrashLab Sign In</h2>
+            <p style="color:var(--text-muted);font-size:0.875rem;">Private Beta &bull; Production Authentication</p>
+          </div>
+          <div class="auth-notice-box" style="border-left-color:var(--accent-primary, #38bdf8);">
+            <strong>Supabase Authentication</strong><br>
+            Sign in with your authorized test user or operator account to access your workspace.
+          </div>
+          \${errorHtml}
+          <form id="auth-form" autocomplete="on">
+            <div class="form-group">
+              <label class="form-label" for="input-email">Email Address</label>
+              <input id="input-email" class="form-input" type="email" placeholder="operator@company.com" required autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-password">Password</label>
+              <input id="input-password" class="form-input" type="password" placeholder="••••••••••••" required autocomplete="current-password">
+            </div>
+            \${needsUrl ? \`
+            <div class="form-group">
+              <label class="form-label" for="input-supabase-url">Supabase URL</label>
+              <input id="input-supabase-url" class="form-input" type="url" placeholder="https://xyz.supabase.co" required>
+            </div>
+            \` : ''}
+            \${needsAnonKey ? \`
+            <div class="form-group">
+              <label class="form-label" for="input-anon-key">Supabase Public Anon Key</label>
+              <input id="input-anon-key" class="form-input" type="password" placeholder="eyJhbGci..." required>
+              <div class="form-help">Enter the public anon key (never enter the service-role key).</div>
+            </div>
+            \` : ''}
+            <button id="btn-submit-auth" type="submit" class="btn btn-primary" style="width:100%;padding:0.7rem;font-size:0.95rem;" \${state.authSubmitting ? 'disabled' : ''}>
+              \${state.authSubmitting ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
+        </div>
+      </div>
+    \`;
+  }
+
+  function renderDevelopmentAuthView() {
     return \`
       <div class="auth-wrapper">
         <div class="auth-card">
@@ -1226,10 +1288,81 @@ export const CLIENT_JS_BUNDLE: string = `
   // --- DOM Event Binding ---
   function bindAuthEvents() {
     const form = document.getElementById('auth-form');
-    if (form) {
-      form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        state.error = null;
+    if (!form) return;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      state.error = null;
+
+      if (state.authMode === 'production') {
+        const emailInput = document.getElementById('input-email');
+        const passwordInput = document.getElementById('input-password');
+        const urlInput = document.getElementById('input-supabase-url');
+        const anonKeyInput = document.getElementById('input-anon-key');
+
+        const email = emailInput ? emailInput.value.trim() : '';
+        const password = passwordInput ? passwordInput.value : '';
+        const targetSupabaseUrl = state.supabaseUrl || (urlInput ? urlInput.value.trim() : '');
+        const targetAnonKey = state.supabaseAnonKey || (anonKeyInput ? anonKeyInput.value.trim() : '');
+
+        if (!email || !password) {
+          state.error = 'Email and password are required.';
+          renderApp();
+          return;
+        }
+
+        if (!targetSupabaseUrl) {
+          state.error = 'Supabase URL is required.';
+          renderApp();
+          return;
+        }
+
+        if (!targetAnonKey) {
+          state.error = 'Supabase public anon key is required.';
+          renderApp();
+          return;
+        }
+
+        state.authSubmitting = true;
+        renderApp();
+
+        try {
+          const authEndpoint = \`\${targetSupabaseUrl.replace(/\\/+$/, '')}/auth/v1/token?grant_type=password\`;
+          const res = await fetch(authEndpoint, {
+            method: 'POST',
+            headers: {
+              'apikey': targetAnonKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password }),
+          });
+
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const msg = data.error_description || data.msg || data.message || \`Authentication failed (HTTP \${res.status})\`;
+            throw new Error(msg);
+          }
+
+          if (!data.access_token) {
+            throw new Error('Supabase authentication did not return an access token.');
+          }
+
+          state.token = data.access_token;
+          state.currentUser = data.user ? {
+            id: data.user.id,
+            email: data.user.email,
+            name: data.user.user_metadata?.name || (data.user.email ? data.user.email.split('@')[0] : 'User'),
+            status: 'active',
+          } : null;
+
+          navigate('overview');
+        } catch (err) {
+          state.error = err.message || 'Authentication failed.';
+        } finally {
+          state.authSubmitting = false;
+          renderApp();
+        }
+      } else {
         const urlInput = document.getElementById('input-api-url');
         const tokenInput = document.getElementById('input-token');
         if (urlInput) state.apiUrl = urlInput.value.trim();
@@ -1242,8 +1375,8 @@ export const CLIENT_JS_BUNDLE: string = `
         }
 
         navigate('overview');
-      });
-    }
+      }
+    });
   }
 
   function bindGlobalEvents() {
@@ -1563,7 +1696,19 @@ export const CLIENT_JS_BUNDLE: string = `
   function init() {
     const metaApiUrl = document.querySelector('meta[name="default-api-url"]');
     if (metaApiUrl && metaApiUrl.content) {
-      state.apiUrl = metaApiUrl.content;
+      state.apiUrl = decodeURI(metaApiUrl.content);
+    }
+    const metaAuthMode = document.querySelector('meta[name="auth-mode"]');
+    if (metaAuthMode && metaAuthMode.content) {
+      state.authMode = metaAuthMode.content;
+    }
+    const metaSupabaseUrl = document.querySelector('meta[name="supabase-url"]');
+    if (metaSupabaseUrl && metaSupabaseUrl.content) {
+      state.supabaseUrl = decodeURI(metaSupabaseUrl.content);
+    }
+    const metaSupabaseAnonKey = document.querySelector('meta[name="supabase-anon-key"]');
+    if (metaSupabaseAnonKey && metaSupabaseAnonKey.content) {
+      state.supabaseAnonKey = decodeURI(metaSupabaseAnonKey.content);
     }
 
     if (!state.token) {

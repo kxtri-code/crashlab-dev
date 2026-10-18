@@ -43,6 +43,8 @@ export interface RouteHandlerContext {
   readonly maxRequestBodyBytes?: number;
   readonly maxArtifactBytes?: number;
   readonly serveDashboard?: boolean;
+  readonly supabaseUrl?: string;
+  readonly supabaseAnonKey?: string;
 }
 
 
@@ -284,13 +286,28 @@ export async function handleProductApiRequest(
       pathname === '/index.html' ||
       (!pathname.startsWith('/api/') && !pathname.startsWith('/health') && !pathname.startsWith('/readiness'))
     ) {
-      const html = renderDashboardHtmlShell({ apiUrl: '' });
+      const supabaseUrl = context.supabaseUrl ?? process.env.SUPABASE_URL?.trim();
+      const supabaseAnonKey = context.supabaseAnonKey ?? process.env.SUPABASE_ANON_KEY?.trim();
+      const html = renderDashboardHtmlShell({
+        apiUrl: '',
+        authMode: isProduction ? 'production' : 'development',
+        supabaseUrl,
+        supabaseAnonKey,
+      });
+
+      let connectSrcExtra = '';
+      if (supabaseUrl) {
+        try {
+          connectSrcExtra = ` ${new URL(supabaseUrl).origin}`;
+        } catch {}
+      }
+
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
         'content-security-policy':
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws:; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self';",
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws: https://*.supabase.co${connectSrcExtra}; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self';`,
       });
       res.end(method === 'HEAD' ? undefined : html);
       return;

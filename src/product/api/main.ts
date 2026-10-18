@@ -148,6 +148,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       databaseUrl: process.env.DATABASE_URL,
       serveDashboard: true,
       corsAllowedOrigins,
+      supabaseUrl: process.env.SUPABASE_URL,
+      supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
     });
   } catch (err) {
     console.error(`[FATAL] Failed to initialize Product API server: ${(err as Error).message}`);

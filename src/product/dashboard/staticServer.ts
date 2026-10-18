@@ -28,6 +28,11 @@ export async function handleDashboardRequest(
   req: IncomingMessage,
   res: ServerResponse,
   apiUrl: string,
+  options: {
+    authMode?: 'production' | 'development';
+    supabaseUrl?: string;
+    supabaseAnonKey?: string;
+  } = {},
 ): Promise<void> {
   const method = req.method?.toUpperCase() ?? 'GET';
   const rawUrl = req.url ?? '/';
@@ -153,13 +158,29 @@ export async function handleDashboardRequest(
   }
 
   // 7. Root HTML Shell: / or /* (SPA routing fallback)
-  const html = renderDashboardHtmlShell({ apiUrl });
+  const authMode = options.authMode ?? (process.env.PRODUCT_AUTH_MODE === 'production' ? 'production' : 'development');
+  const supabaseUrl = options.supabaseUrl ?? process.env.SUPABASE_URL?.trim();
+  const supabaseAnonKey = options.supabaseAnonKey ?? process.env.SUPABASE_ANON_KEY?.trim();
+  const html = renderDashboardHtmlShell({
+    apiUrl,
+    authMode,
+    supabaseUrl,
+    supabaseAnonKey,
+  });
+
+  let connectSrcExtra = '';
+  if (supabaseUrl) {
+    try {
+      connectSrcExtra = ` ${new URL(supabaseUrl).origin}`;
+    } catch {}
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy':
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws:; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self';",
+      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws: https://*.supabase.co${connectSrcExtra}; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self';`,
   });
   res.end(method === 'HEAD' ? undefined : html);
 }
@@ -173,7 +194,7 @@ export async function createDashboardServer(
 
   return new Promise((resolve, reject) => {
     const server: Server = createServer((req, res) => {
-      handleDashboardRequest(req, res, apiUrl).catch((err) => {
+      handleDashboardRequest(req, res, apiUrl, options).catch((err) => {
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: (err as Error).message } }));

@@ -47,6 +47,9 @@ export interface DashboardServerOptions {
   readonly host?: string;
   readonly port?: number;
   readonly apiUrl?: string;
+  readonly authMode?: 'production' | 'development';
+  readonly supabaseUrl?: string;
+  readonly supabaseAnonKey?: string;
 }
 
 export interface RunningDashboardServer {

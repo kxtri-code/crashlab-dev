@@ -54,6 +54,8 @@ export interface ProductApiServerOptions {
   readonly maxRequestBodyBytes?: number;
   readonly maxArtifactBytes?: number;
   readonly serveDashboard?: boolean;
+  readonly supabaseUrl?: string;
+  readonly supabaseAnonKey?: string;
 }
 
 
@@ -145,6 +147,8 @@ export class ProductApiServer {
       maxRequestBodyBytes: options.maxRequestBodyBytes,
       maxArtifactBytes: options.maxArtifactBytes,
       serveDashboard: options.serveDashboard,
+      supabaseUrl: options.supabaseUrl,
+      supabaseAnonKey: options.supabaseAnonKey,
     };
 
 
