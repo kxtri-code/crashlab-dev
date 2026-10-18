@@ -56,5 +56,8 @@ export function validateProductTargetPreflight(
   testDataFile?: string,
 ): PreflightResult {
   const pilotConfig = adaptToPilotConfiguration(target, journeys, testDataFile);
-  return validatePilotConfiguration(pilotConfig, { checkFilesystem: Boolean(testDataFile) });
+  return validatePilotConfiguration(pilotConfig, {
+    checkFilesystem: Boolean(testDataFile),
+    allowSingleJourney: journeys.length === 1,
+  });
 }

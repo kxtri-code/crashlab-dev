@@ -55,6 +55,12 @@ export const CLIENT_JS_BUNDLE: string = `
     executionSubmitting: false,
     executionError: null,
     executionFailureReasons: [],
+    targetModalOpen: false,
+    targetSubmitting: false,
+    targetError: null,
+    journeyModalOpen: false,
+    journeySubmitting: false,
+    journeyError: null,
     loading: false,
     error: null,
     lastRequestId: null,
@@ -794,6 +800,95 @@ export const CLIENT_JS_BUNDLE: string = `
       </div>
     \` : '';
 
+    const targetModal = state.targetModalOpen ? \`
+      <div class="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0;font-size:1.15rem;">Register Target Environment</h3>
+          </div>
+          <div class="modal-body">
+            <div class="execution-warning-box">
+              <strong>Safe-Test Notice:</strong> Only dedicated non-production environments (staging, qa, demo, local) may be registered. Production targets are strictly prohibited.
+            </div>
+            \${state.targetError ? \`<div style="color:var(--status-failed);background:rgba(239,68,68,0.1);padding:0.6rem;border-radius:6px;margin-bottom:1rem;font-size:0.85rem;">\${escapeHtml(state.targetError)}</div>\` : ''}
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-target-name">Target Name</label>
+              <input id="input-target-name" class="form-input" type="text" value="External Staging Pilot" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="select-target-env">Environment</label>
+              <select id="select-target-env" class="form-input">
+                <option value="staging" selected>staging</option>
+                <option value="qa">qa</option>
+                <option value="demo">demo</option>
+                <option value="local">local</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-target-url">Target URL</label>
+              <input id="input-target-url" class="form-input" type="url" value="https://crashlab-api.onrender.com/staging-pilot" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-target-origins">Allowed Origins</label>
+              <input id="input-target-origins" class="form-input" type="text" value="https://crashlab-api.onrender.com" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-target-auth-ref">Owner Authorization Reference</label>
+              <input id="input-target-auth-ref" class="form-input" type="text" value="AUTH-STAGING-PILOT-12H" required>
+              <div class="form-help">Identifier verifying owner approval (no secret keys or tokens).</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-cancel-target-modal" class="btn btn-secondary">Cancel</button>
+            <button id="btn-submit-target" class="btn btn-primary" \${state.targetSubmitting ? 'disabled' : ''}>
+              \${state.targetSubmitting ? 'Registering...' : 'Register Target'}
+            </button>
+          </div>
+        </div>
+      </div>
+    \` : '';
+
+    const targetOptions = state.targets.map(t => \`<option value="\${escapeHtml(t.id)}">\${escapeHtml(t.name)} (\${escapeHtml(t.environment)})</option>\`).join('');
+    const journeyModal = state.journeyModalOpen ? \`
+      <div class="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 style="margin:0;font-size:1.15rem;">Create Approved Journey</h3>
+          </div>
+          <div class="modal-body">
+            <div class="execution-warning-box">
+              <strong>Human QA Review:</strong> Approved journeys declare explicit boundaries for automated exploration. Financial and destructive actions are permanently prohibited.
+            </div>
+            \${state.journeyError ? \`<div style="color:var(--status-failed);background:rgba(239,68,68,0.1);padding:0.6rem;border-radius:6px;margin-bottom:1rem;font-size:0.85rem;">\${escapeHtml(state.journeyError)}</div>\` : ''}
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="select-journey-target">Target Environment</label>
+              <select id="select-journey-target" class="form-input">
+                \${targetOptions}
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-journey-goal">Human Goal / Intent</label>
+              <input id="input-journey-goal" class="form-input" type="text" value="Verify staging pilot interaction and defect detection" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-journey-origin">Target Origin</label>
+              <input id="input-journey-origin" class="form-input" type="url" value="\${escapeHtml(state.targets[0]?.targetOrigin || 'https://crashlab-api.onrender.com')}" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0.75rem;">
+              <label class="form-label" for="input-journey-actions">Allowed Actions</label>
+              <input id="input-journey-actions" class="form-input" type="text" value="navigate, click, interact" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-cancel-journey-modal" class="btn btn-secondary">Cancel</button>
+            <button id="btn-submit-journey" class="btn btn-primary" \${state.journeySubmitting ? 'disabled' : ''}>
+              \${state.journeySubmitting ? 'Creating...' : 'Approve Journey'}
+            </button>
+          </div>
+        </div>
+      </div>
+    \` : '';
+
     return \`
       <div class="panel-header">
         <div>
@@ -805,14 +900,18 @@ export const CLIENT_JS_BUNDLE: string = `
       <div style="display:grid;grid-template-columns:300px 1fr;gap:1.5rem;align-items:start;">
         <div>
           <div class="panel">
-            <h2 class="panel-title" style="font-size:1rem;margin-bottom:0.75rem;">Configured Targets</h2>
+            <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+              <h2 class="panel-title" style="font-size:1rem;margin:0;">Configured Targets</h2>
+              <button id="btn-open-target-modal" class="btn btn-secondary btn-sm">+ Register Target</button>
+            </div>
             \${targetList || '<p style="color:var(--text-dim);font-size:0.8rem;">No targets configured.</p>'}
           </div>
         </div>
         <div>
           <div class="panel">
-            <div class="panel-header">
-              <h2 class="panel-title" style="font-size:1rem;">Approved Journeys</h2>
+            <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+              <h2 class="panel-title" style="font-size:1rem;margin:0;">Approved Journeys</h2>
+              <button id="btn-open-journey-modal" class="btn btn-secondary btn-sm" \${state.targets.length === 0 ? 'disabled' : ''}>+ Create Journey</button>
             </div>
             \${journeyCards || '<p style="color:var(--text-dim);font-size:0.85rem;padding:1rem;text-align:center;">No approved journeys found for this project.</p>'}
           </div>
@@ -841,6 +940,8 @@ export const CLIENT_JS_BUNDLE: string = `
         </div>
       </div>
       \${executionModal}
+      \${targetModal}
+      \${journeyModal}
     \`;
   }
 
@@ -1249,6 +1350,161 @@ export const CLIENT_JS_BUNDLE: string = `
           state.executionFailureReasons = err.failureReasons && err.failureReasons.length > 0
             ? err.failureReasons
             : [err.message];
+          renderApp();
+        }
+      });
+    }
+
+    // Target Registration modal triggers
+    const openTargetModalBtn = document.getElementById('btn-open-target-modal');
+    if (openTargetModalBtn) {
+      openTargetModalBtn.addEventListener('click', () => {
+        state.targetModalOpen = true;
+        state.targetError = null;
+        state.targetSubmitting = false;
+        renderApp();
+      });
+    }
+
+    const cancelTargetModalBtn = document.getElementById('btn-cancel-target-modal');
+    if (cancelTargetModalBtn) {
+      cancelTargetModalBtn.addEventListener('click', () => {
+        state.targetModalOpen = false;
+        state.targetError = null;
+        renderApp();
+      });
+    }
+
+    const submitTargetBtn = document.getElementById('btn-submit-target');
+    if (submitTargetBtn) {
+      submitTargetBtn.addEventListener('click', async () => {
+        if (!state.currentWorkspace || !state.selectedProject) return;
+        const nameInput = document.getElementById('input-target-name');
+        const envInput = document.getElementById('select-target-env');
+        const urlInput = document.getElementById('input-target-url');
+        const originsInput = document.getElementById('input-target-origins');
+        const authRefInput = document.getElementById('input-target-auth-ref');
+
+        const name = nameInput ? nameInput.value.trim() : '';
+        const environment = envInput ? envInput.value.trim() : 'staging';
+        const targetUrl = urlInput ? urlInput.value.trim() : '';
+        const allowedOrigins = originsInput
+          ? originsInput.value.split(',').map(s => s.trim()).filter(Boolean)
+          : [];
+        const authorizationReference = authRefInput ? authRefInput.value.trim() : '';
+
+        if (!name || !targetUrl) {
+          state.targetError = 'Name and Target URL are required.';
+          renderApp();
+          return;
+        }
+
+        state.targetSubmitting = true;
+        state.targetError = null;
+        renderApp();
+
+        try {
+          const res = await api.postJson('/api/v1/projects/' + state.selectedProject.id + '/targets', {
+            workspaceId: state.currentWorkspace.id,
+            name,
+            environment,
+            targetUrl,
+            allowedOrigins,
+            authorizationReference,
+          });
+          if (res && res.success && res.data) {
+            state.targets.push(res.data);
+            state.targetModalOpen = false;
+            state.targetSubmitting = false;
+            renderApp();
+          } else {
+            throw new Error(res.error?.message || 'Failed to register target.');
+          }
+        } catch (err) {
+          state.targetSubmitting = false;
+          state.targetError = err.message || 'Target registration failed.';
+          renderApp();
+        }
+      });
+    }
+
+    // Journey Creation modal triggers
+    const openJourneyModalBtn = document.getElementById('btn-open-journey-modal');
+    if (openJourneyModalBtn) {
+      openJourneyModalBtn.addEventListener('click', () => {
+        state.journeyModalOpen = true;
+        state.journeyError = null;
+        state.journeySubmitting = false;
+        renderApp();
+      });
+    }
+
+    const cancelJourneyModalBtn = document.getElementById('btn-cancel-journey-modal');
+    if (cancelJourneyModalBtn) {
+      cancelJourneyModalBtn.addEventListener('click', () => {
+        state.journeyModalOpen = false;
+        state.journeyError = null;
+        renderApp();
+      });
+    }
+
+    const selectJourneyTarget = document.getElementById('select-journey-target');
+    if (selectJourneyTarget) {
+      selectJourneyTarget.addEventListener('change', (e) => {
+        const tId = e.target.value;
+        const tgt = state.targets.find(t => t.id === tId);
+        const originInput = document.getElementById('input-journey-origin');
+        if (tgt && originInput) {
+          originInput.value = tgt.targetOrigin;
+        }
+      });
+    }
+
+    const submitJourneyBtn = document.getElementById('btn-submit-journey');
+    if (submitJourneyBtn) {
+      submitJourneyBtn.addEventListener('click', async () => {
+        if (!state.currentWorkspace || !state.selectedProject) return;
+        const targetSelect = document.getElementById('select-journey-target');
+        const goalInput = document.getElementById('input-journey-goal');
+        const originInput = document.getElementById('input-journey-origin');
+        const actionsInput = document.getElementById('input-journey-actions');
+
+        const targetEnvironmentId = targetSelect ? targetSelect.value : (state.targets[0]?.id || '');
+        const goal = goalInput ? goalInput.value.trim() : '';
+        const origin = originInput ? originInput.value.trim() : '';
+        const allowedActions = actionsInput
+          ? actionsInput.value.split(',').map(s => s.trim()).filter(Boolean)
+          : ['navigate', 'click'];
+
+        if (!targetEnvironmentId || !goal || !origin) {
+          state.journeyError = 'Target, Goal, and Origin are required.';
+          renderApp();
+          return;
+        }
+
+        state.journeySubmitting = true;
+        state.journeyError = null;
+        renderApp();
+
+        try {
+          const res = await api.postJson('/api/v1/projects/' + state.selectedProject.id + '/journeys', {
+            workspaceId: state.currentWorkspace.id,
+            targetEnvironmentId,
+            goal,
+            origin,
+            allowedActions,
+          });
+          if (res && res.success && res.data) {
+            state.journeys.push(res.data);
+            state.journeyModalOpen = false;
+            state.journeySubmitting = false;
+            renderApp();
+          } else {
+            throw new Error(res.error?.message || 'Failed to create journey.');
+          }
+        } catch (err) {
+          state.journeySubmitting = false;
+          state.journeyError = err.message || 'Journey creation failed.';
           renderApp();
         }
       });

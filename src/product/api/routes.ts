@@ -25,6 +25,7 @@ import { authenticateRequest } from '../auth/middleware.js';
 import type { ArtifactType } from '../types/artifact.js';
 import type { IdGenerator } from '../util/id.js';
 import { STYLES_CSS, CLIENT_JS_BUNDLE, renderDashboardHtmlShell } from '../dashboard/index.js';
+import { STAGING_PILOT_HTML } from './stagingFixture.js';
 
 export class PayloadTooLargeError extends Error {
   constructor(message: string) {
@@ -213,6 +214,42 @@ export async function handleProductApiRequest(
         checks: {
           database: dbOk ? 'connected' : 'unreachable',
           storage: storageOk ? 'ready' : 'unreachable',
+        },
+        requestId: fallbackRequestId,
+      },
+      fallbackRequestId,
+      corsHeaders,
+    );
+    return;
+  }
+
+  // 1.7 Dedicated Staging Pilot Fixture (Public, safe for automated testing, zero customer data)
+  if (
+    (pathname === '/staging-pilot' || pathname === '/api/v1/staging-pilot') &&
+    (method === 'GET' || method === 'HEAD')
+  ) {
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'access-control-allow-origin': '*',
+    });
+    res.end(method === 'HEAD' ? undefined : STAGING_PILOT_HTML);
+    return;
+  }
+
+  if (
+    (pathname === '/staging-pilot/defect-probe' || pathname === '/api/v1/staging-pilot/defect-probe') &&
+    method === 'GET'
+  ) {
+    sendJson(
+      res,
+      500,
+      {
+        success: false,
+        error: {
+          code: 'CONTROLLED_STAGING_DEFECT',
+          message: 'Controlled synthetic staging defect for Build 12H external staging pilot.',
         },
         requestId: fallbackRequestId,
       },
@@ -419,6 +456,55 @@ export async function handleProductApiRequest(
       sendJson(res, 200, { success: true, data: { targets }, requestId }, requestId);
       return;
     }
+    if ((pathname === '/api/v1/targets' || projectTargetsMatch) && method === 'POST') {
+      const body = await parseBody<{
+        workspaceId?: string;
+        projectId?: string;
+        name?: string;
+        environment?: 'local' | 'staging' | 'qa' | 'demo';
+        targetUrl?: string;
+        allowedOrigins?: string[] | string;
+        authorizationReference?: string;
+        testDataReference?: string;
+        forbiddenActions?: string[];
+        resetProcedure?: string;
+        testingWindow?: string;
+      }>(req);
+      const projectId = projectTargetsMatch ? projectTargetsMatch[1]! : body.projectId;
+      if (!body.workspaceId || !projectId || !body.name || !body.targetUrl || !body.environment) {
+        sendError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'Missing required fields "workspaceId", "name", "environment", and "targetUrl".',
+          requestId,
+        );
+        return;
+      }
+      targetedWorkspaceId = body.workspaceId;
+      const allowedOrigins = Array.isArray(body.allowedOrigins)
+        ? body.allowedOrigins
+        : (body.allowedOrigins ? [body.allowedOrigins] : [new URL(body.targetUrl).origin]);
+
+      const target = await context.service.createTarget(
+        {
+          workspaceId: body.workspaceId,
+          projectId,
+          name: body.name,
+          environment: body.environment,
+          targetUrl: body.targetUrl,
+          allowedOrigins,
+          authorizationReference: body.authorizationReference,
+          testDataReference: body.testDataReference,
+          forbiddenActions: body.forbiddenActions,
+          resetProcedure: body.resetProcedure,
+          testingWindow: body.testingWindow,
+        },
+        actorUserId,
+      );
+      sendJson(res, 201, { success: true, data: target, requestId }, requestId);
+      return;
+    }
 
     // Target journeys endpoint: /api/v1/targets/:targetId/journeys or /api/v1/journeys
     const targetJourneysMatch = pathname.match(/^\/api\/v1\/targets\/([^/]+)\/journeys$/);
@@ -451,6 +537,54 @@ export async function handleProductApiRequest(
       targetedWorkspaceId = workspaceId;
       const journeys = await context.service.listJourneysByProject(workspaceId, projectId, actorUserId);
       sendJson(res, 200, { success: true, data: { journeys }, requestId }, requestId);
+      return;
+    }
+    if ((pathname === '/api/v1/journeys' || projectJourneysMatch || targetJourneysMatch) && method === 'POST') {
+      const body = await parseBody<{
+        workspaceId?: string;
+        projectId?: string;
+        targetEnvironmentId?: string;
+        goal?: string;
+        origin?: string;
+        allowedActions?: string[] | string;
+        forbiddenActions?: string[];
+        requiresCredentials?: boolean;
+        requiresTestData?: boolean;
+      }>(req);
+      const projectId = projectJourneysMatch ? projectJourneysMatch[1]! : body.projectId;
+      const targetId = targetJourneysMatch ? targetJourneysMatch[1]! : body.targetEnvironmentId;
+      if (!body.workspaceId || !projectId || !targetId || !body.goal || !body.origin) {
+        sendError(
+          res,
+          400,
+          'BAD_REQUEST',
+          'Missing required fields "workspaceId", "projectId", "targetEnvironmentId", "goal", and "origin".',
+          requestId,
+        );
+        return;
+      }
+      targetedWorkspaceId = body.workspaceId;
+      const allowedActions = Array.isArray(body.allowedActions)
+        ? body.allowedActions
+        : (typeof body.allowedActions === 'string'
+            ? body.allowedActions.split(',').map((s) => s.trim()).filter(Boolean)
+            : ['navigate', 'click']);
+
+      const journey = await context.service.approveJourney(
+        {
+          workspaceId: body.workspaceId,
+          projectId,
+          targetEnvironmentId: targetId,
+          goal: body.goal,
+          origin: body.origin,
+          allowedActions,
+          forbiddenActions: body.forbiddenActions,
+          requiresCredentials: body.requiresCredentials,
+          requiresTestData: body.requiresTestData,
+        },
+        actorUserId,
+      );
+      sendJson(res, 201, { success: true, data: journey, requestId }, requestId);
       return;
     }
 

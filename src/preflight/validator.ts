@@ -24,6 +24,8 @@ import { VALID_PILOT_ENVIRONMENTS } from './types.js';
 export interface PreflightValidationOptions {
   /** If true (default), checks filesystem for testDataFile existence. */
   readonly checkFilesystem?: boolean;
+  /** If true, allows single journey validation for individual run execution. */
+  readonly allowSingleJourney?: boolean;
 }
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
@@ -84,6 +86,7 @@ const STAGING_HOSTNAME_INDICATORS = [
   /\.invalid$/i,
   /\.internal$/i,
   /\.local$/i,
+  /\bonrender\.com$/i,
 ];
 
 const PRODUCTION_HOSTNAME_KEYWORDS = [
@@ -345,12 +348,12 @@ export function validatePilotConfiguration(
   const journeyIds = new Set<string>();
   let journeysValid = true;
 
-  const minJourneys = isLocalEnv ? 1 : 2;
+  const minJourneys = options.allowSingleJourney ? 1 : (isLocalEnv ? 1 : 2);
   const maxJourneys = 4;
 
   if (journeys.length < minJourneys || journeys.length > maxJourneys) {
-    const rangeMsg = isLocalEnv
-      ? `Local environment requires 1 to ${maxJourneys} journeys (found ${journeys.length}).`
+    const rangeMsg = (isLocalEnv || options.allowSingleJourney)
+      ? `Environment requires 1 to ${maxJourneys} journeys (found ${journeys.length}).`
       : `Staging environment requires 2 to ${maxJourneys} approved journeys (found ${journeys.length}).`;
     addCheck('journey_count_bounds', `Journey count within bounds (${minJourneys}–${maxJourneys})`, 'journeys', false, rangeMsg);
     addError('INVALID_JOURNEY_COUNT', rangeMsg, 'allowedJourneys');

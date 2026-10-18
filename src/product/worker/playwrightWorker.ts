@@ -55,6 +55,51 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
     }
 
     // 3. Resolve JourneyPlan
+    const defaultSteps: import('../../journey/types.js').JourneyStep[] = [
+      {
+        id: 'step-001',
+        order: 1,
+        intent: 'navigate_to_target',
+        action: 'navigate',
+        description: `Navigate to target ${input.target.targetUrl}`,
+        targetElementIds: [],
+        locatorCandidates: [],
+        expectedOutcome: `Successfully navigate to ${input.target.targetUrl}`,
+        confidence: 1.0,
+        executable: false,
+        source: { report: 'synthetic', elementIds: [] },
+        isFallback: true,
+      },
+    ];
+
+    const isStagingPilot =
+      input.target.targetUrl.includes('staging-pilot') ||
+      input.journey.origin.includes('staging-pilot') ||
+      input.journey.goal.toLowerCase().includes('staging') ||
+      input.journey.goal.toLowerCase().includes('pilot') ||
+      input.journey.goal.toLowerCase().includes('interact');
+
+    const allowsInteraction = input.journey.allowedActions.some((a) =>
+      ['click', 'interact', 'probe'].includes(a.toLowerCase().trim()),
+    );
+
+    if (isStagingPilot && allowsInteraction) {
+      defaultSteps.push({
+        id: 'step-002',
+        order: 2,
+        intent: 'trigger_interaction',
+        action: 'click',
+        description: 'Trigger staging pilot interaction and controlled probe',
+        targetElementIds: ['btn-interact'],
+        locatorCandidates: ['#btn-interact', 'button#btn-interact'],
+        expectedOutcome: 'Staging pilot responds to interaction and triggers controlled probe',
+        confidence: 1.0,
+        executable: false,
+        source: { report: 'synthetic', elementIds: ['btn-interact'] },
+        isFallback: false,
+      });
+    }
+
     const plan: JourneyPlan = (input.journey as any).plan ?? {
       schemaVersion: '1.0',
       goal: input.journey.goal,
@@ -65,21 +110,7 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
         finalUrl: input.target.targetUrl,
         title: input.target.name,
       },
-      steps: (input.journey as any).steps ?? [
-        {
-          id: 'step-001',
-          order: 1,
-          intent: 'navigate_to_target',
-          action: 'navigate',
-          description: `Navigate to target ${input.target.targetUrl}`,
-          target: { type: 'url', value: input.target.targetUrl },
-          targetElementIds: [],
-          locatorCandidates: [],
-          expectedOutcome: `Successfully navigate to ${input.target.targetUrl}`,
-          executable: true,
-          isFallback: true,
-        },
-      ],
+      steps: (input.journey as any).steps ?? defaultSteps,
       assumptions: [],
       warnings: [],
       missingInformation: [],
