@@ -573,25 +573,25 @@ export const CLIENT_JS_BUNDLE: string = `
             Sign in with your authorized test user or operator account to access your workspace.
           </div>
           \${errorHtml}
-          <form id="auth-form" autocomplete="on">
+          <form id="auth-form" autocomplete="on" novalidate>
             <div class="form-group">
               <label class="form-label" for="input-email">Email Address</label>
-              <input id="input-email" class="form-input" type="email" placeholder="operator@company.com" required autocomplete="email">
+              <input id="input-email" class="form-input" type="email" placeholder="operator@company.com" autocomplete="email">
             </div>
             <div class="form-group">
               <label class="form-label" for="input-password">Password</label>
-              <input id="input-password" class="form-input" type="password" placeholder="••••••••••••" required autocomplete="current-password">
+              <input id="input-password" class="form-input" type="password" placeholder="••••••••••••" autocomplete="current-password">
             </div>
             \${needsUrl ? \`
             <div class="form-group">
               <label class="form-label" for="input-supabase-url">Supabase URL</label>
-              <input id="input-supabase-url" class="form-input" type="url" placeholder="https://xyz.supabase.co" required>
+              <input id="input-supabase-url" class="form-input" type="url" placeholder="https://xyz.supabase.co">
             </div>
             \` : ''}
             \${needsAnonKey ? \`
             <div class="form-group">
               <label class="form-label" for="input-anon-key">Supabase Public Anon Key</label>
-              <input id="input-anon-key" class="form-input" type="password" placeholder="eyJhbGci..." required>
+              <input id="input-anon-key" class="form-input" type="password" placeholder="eyJhbGci...">
               <div class="form-help">Enter the public anon key (never enter the service-role key).</div>
             </div>
             \` : ''}
