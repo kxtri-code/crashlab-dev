@@ -598,6 +598,15 @@ export const CLIENT_JS_BUNDLE: string = `
             <button id="btn-submit-auth" type="submit" class="btn btn-primary" style="width:100%;padding:0.7rem;font-size:0.95rem;" \${state.authSubmitting ? 'disabled' : ''}>
               \${state.authSubmitting ? 'Signing in...' : 'Sign In'}
             </button>
+            <div style="margin:1.25rem 0 1rem 0;text-align:center;position:relative;">
+              <hr style="border:0;border-top:1px solid #334155;margin:0 0 -0.55rem 0;">
+              <span style="background:#1e293b;padding:0 0.5rem;color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;">or sign in with user jwt</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-token">Supabase Authenticated User JWT</label>
+              <input id="input-token" class="form-input" type="password" placeholder="eyJhbGci..." autocomplete="off">
+              <div class="form-help">Enter a normal Supabase authenticated user JWT to access your workspace.</div>
+            </div>
           </form>
         </div>
       </div>
@@ -1295,6 +1304,27 @@ export const CLIENT_JS_BUNDLE: string = `
       state.error = null;
 
       if (state.authMode === 'production') {
+        const tokenInput = document.getElementById('input-token');
+        const directToken = tokenInput ? tokenInput.value.trim() : '';
+
+        if (directToken) {
+          state.token = directToken;
+          try {
+            const parts = directToken.split('.');
+            if (parts.length === 3) {
+              const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+              state.currentUser = {
+                id: payload.sub || 'user',
+                email: payload.email || 'user@crashlab.internal',
+                name: payload.user_metadata?.name || (payload.email ? payload.email.split('@')[0] : 'User'),
+                status: 'active',
+              };
+            }
+          } catch {}
+          navigate('overview');
+          return;
+        }
+
         const emailInput = document.getElementById('input-email');
         const passwordInput = document.getElementById('input-password');
         const urlInput = document.getElementById('input-supabase-url');
@@ -1306,7 +1336,7 @@ export const CLIENT_JS_BUNDLE: string = `
         const targetAnonKey = state.supabaseAnonKey || (anonKeyInput ? anonKeyInput.value.trim() : '');
 
         if (!email || !password) {
-          state.error = 'Email and password are required.';
+          state.error = 'Email and password (or Supabase User JWT) are required.';
           renderApp();
           return;
         }
