@@ -111,17 +111,18 @@ export const STAGING_PILOT_HTML = `<!DOCTYPE html>
       var out = document.getElementById('status-output');
       out.textContent = 'Interaction executed. Sending controlled defect probe...';
       console.log('Staging interaction triggered by test runner');
-      fetch('/staging-pilot/defect-probe')
-        .then(function(res) {
-          out.textContent = 'Controlled probe status: ' + res.status + ' ' + res.statusText;
-          if (!res.ok) {
-            console.error('Controlled Staging Defect: probe returned HTTP ' + res.status);
-          }
-        })
-        .catch(function(err) {
-          out.textContent = 'Probe fetch error: ' + err.message;
-          console.error('Controlled Staging Defect: fetch network error ' + err.message);
-        });
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/staging-pilot/defect-probe', false);
+        xhr.send();
+        out.textContent = 'Controlled probe status: ' + xhr.status + ' ' + xhr.statusText;
+        if (xhr.status >= 500) {
+          console.error('Controlled Staging Defect: probe returned HTTP ' + xhr.status);
+        }
+      } catch (err) {
+        out.textContent = 'Probe error: ' + (err.message || String(err));
+        console.error('Controlled Staging Defect error: ' + (err.message || String(err)));
+      }
     });
   </script>
 </body>
