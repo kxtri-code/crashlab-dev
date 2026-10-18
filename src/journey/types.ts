@@ -173,6 +173,8 @@ export interface JourneyStep {
   /** Always `false` in Build 2. */
   executable: false;
   source: JourneyStepSource;
+  /** Build 12G.2: True when this step was generated as a harness fallback action. */
+  isFallback?: boolean;
 }
 
 /** How the plan was produced. */

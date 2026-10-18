@@ -18,6 +18,7 @@ import type {
   EvidenceConsoleEvent,
   EvidenceNetworkEvent,
   EvidencePageError,
+  NetworkEventProvenance,
   StepEvidence,
 } from './types.js';
 import type { Scrubber } from './redaction.js';
@@ -120,6 +121,11 @@ export class EvidenceRecorder {
     this.finalUrl = url;
   }
 
+  /** Build 12G.2: Set provenance on the underlying network recorder. */
+  setNetworkProvenance(provenance: NetworkEventProvenance): void {
+    this.network.setProvenance(provenance);
+  }
+
   /** Consume any events still in flight. */
   settle(): void {
     this.network.settle();
@@ -163,6 +169,7 @@ export class EvidenceRecorder {
       durationMs: entry.durationMs,
       thirdParty: entry.thirdParty,
       failure: entry.failure,
+      provenance: entry.provenance ?? 'target-triggered',
     }));
   }
 
@@ -202,6 +209,7 @@ export class EvidenceRecorder {
       durationMs: entry.durationMs,
       thirdParty: entry.thirdParty,
       failure: entry.failure,
+      provenance: entry.provenance ?? 'target-triggered',
     }));
   }
 

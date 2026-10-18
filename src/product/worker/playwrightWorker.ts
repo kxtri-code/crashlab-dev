@@ -77,6 +77,7 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
           locatorCandidates: [],
           expectedOutcome: `Successfully navigate to ${input.target.targetUrl}`,
           executable: true,
+          isFallback: true,
         },
       ],
       assumptions: [],

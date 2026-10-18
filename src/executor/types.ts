@@ -13,7 +13,10 @@
 
 import type { JourneyAction, JourneyPlan, JourneyType } from '../journey/types.js';
 import type { EnvironmentProvenance, ProvenanceInput } from '../provenance/types.js';
+import type { NetworkEventProvenance } from '../scout/types.js';
 import type { ExpectationsFile, ExpectationOutcome } from './expectations.js';
+
+export type { NetworkEventProvenance };
 
 /** Execution report schema version. */
 export const EXECUTION_SCHEMA_VERSION = '1.0';
@@ -146,6 +149,10 @@ export interface ActionOutcome {
   selectedLocator?: string | null;
   /** Extra detail recorded alongside the step, always redacted. */
   notes?: string[];
+  skipReason?: SkipReason | null;
+  verification?: StepVerification | null;
+  assertion?: import('./structuredAssertionRunner.js').AssertionOutcome | null;
+  postconditions?: import('./postconditionRunner.js').PostconditionOutcome[] | null;
 }
 
 /** What was observed about a resolved element. Never a verdict. */
@@ -201,6 +208,11 @@ export interface EvidenceNetworkEvent {
   durationMs: number | null;
   thirdParty: boolean;
   failure: string | null;
+  /**
+   * Build 12G.2: Provenance identifying whether this exchange was harness navigation
+   * versus target-triggered navigation.
+   */
+  provenance?: NetworkEventProvenance | null;
 }
 
 /** A single step's outcome. Overall-only statuses are excluded. */

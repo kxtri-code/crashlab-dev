@@ -214,8 +214,27 @@ function duplicateRequestRules(context: RuleContext): RawSignal[] {
   }
 
   const signals: RawSignal[] = [];
-  for (const [key, indexes] of groups) {
+  for (const [key, rawIndexes] of groups) {
+    if (rawIndexes.length < 2) continue;
+
+    // Build 12G.2: Exclude only the known self-generated initial-load-plus-fallback-navigation pair.
+    // If the group contains a harness-initial-load and a harness-fallback-navigation,
+    // that specific pair was generated entirely by the test runner harness repeating the initial URL
+    // via the fallback navigation step.
+    const indexes: number[] = [...rawIndexes];
+    const initialLoadIndex = indexes.find((i) => events[i]?.provenance === 'harness-initial-load');
+    const fallbackNavIndex = indexes.find((i) => events[i]?.provenance === 'harness-fallback-navigation');
+
+    if (initialLoadIndex !== undefined && fallbackNavIndex !== undefined) {
+      // Exclude the known self-generated fallback navigation from duplicating the initial load
+      const fallbackPos = indexes.indexOf(fallbackNavIndex);
+      if (fallbackPos !== -1) {
+        indexes.splice(fallbackPos, 1);
+      }
+    }
+
     if (indexes.length < 2) continue;
+
     const first = events[indexes[0]!];
     const resourceType = first?.resourceType ?? null;
     const [method = null, url = '', type = null] = key.split('|');

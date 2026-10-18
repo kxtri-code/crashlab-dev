@@ -163,6 +163,16 @@ export interface ScoutForm {
   externalSubmitButtons: FormField[];
 }
 
+/**
+ * Build 12G.2: Provenance of a network event.
+ * Distinguishes harness-generated navigation from genuine target-triggered navigation.
+ */
+export type NetworkEventProvenance =
+  | 'harness-initial-load'
+  | 'harness-fallback-navigation'
+  | 'harness-navigation'
+  | 'target-triggered';
+
 /** Why a resource is interesting to a failure-hunting tool. */
 export type NetworkIssueKind = 'http-error' | 'failed-request' | 'blocked-request' | 'slow-request';
 
@@ -181,6 +191,11 @@ export interface NetworkEntry {
   /** Short, non-sensitive failure reason, e.g. `net::ERR_ABORTED`. */
   failure: string | null;
   issue: NetworkIssueKind | null;
+  /**
+   * Build 12G.2: Provenance identifying whether this exchange was harness-initiated
+   * or target-triggered.
+   */
+  provenance?: NetworkEventProvenance | null;
 }
 
 /** One HTTP status code seen during the run. */

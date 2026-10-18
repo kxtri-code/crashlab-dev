@@ -31,6 +31,7 @@ export { classifyElement, suggestLocator, mapElements, mapForms, toInteractiveEl
 export { detectPageType, buildPageTypeRules, CONFIDENCE_THRESHOLD } from './scout/pageType.js';
 
 export { NetworkRecorder, summarizeNetwork, markThirdParty, DEFAULT_MAX_ENTRIES } from './scout/network.js';
+export type { NetworkEventProvenance } from './scout/types.js';
 export { TelemetryRecorder, summarizeConsole, normalizeConsoleType } from './scout/telemetry.js';
 
 export { buildReport, summarizeReport, countElements } from './report/build.js';

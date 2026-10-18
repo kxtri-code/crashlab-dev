@@ -8,7 +8,7 @@
  */
 
 import type { Page, Request } from 'playwright';
-import type { NetworkEntry, NetworkIssueKind, NetworkStatusCount, NetworkSummary } from './types.js';
+import type { NetworkEntry, NetworkEventProvenance, NetworkIssueKind, NetworkStatusCount, NetworkSummary } from './types.js';
 import { isThirdParty, redactUrl, toPath } from '../util/url.js';
 
 /** A captured exchange before the page-relative context is known. */
@@ -21,6 +21,7 @@ interface PendingEntry {
   durationMs: number | null;
   failure: string | null;
   issue: NetworkIssueKind | null;
+  provenance?: NetworkEventProvenance | null;
 }
 
 /** Requests slower than this are flagged, and 0 disables the check. */
@@ -54,6 +55,7 @@ export class NetworkRecorder {
   private readonly maxEntries: number;
   private readonly slowRequestMs: number;
   private finalUrl: string | null = null;
+  private currentProvenance: NetworkEventProvenance = 'target-triggered';
 
   private page: Page | null = null;
   private attached = false;
@@ -61,6 +63,16 @@ export class NetworkRecorder {
   constructor(options: NetworkRecorderOptions = {}) {
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.slowRequestMs = options.slowRequestMs ?? DEFAULT_SLOW_REQUEST_MS;
+  }
+
+  /** Build 12G.2: Set the current network event provenance. */
+  setProvenance(provenance: NetworkEventProvenance): void {
+    this.currentProvenance = provenance;
+  }
+
+  /** Build 12G.2: Get the current network event provenance. */
+  getProvenance(): NetworkEventProvenance {
+    return this.currentProvenance;
   }
 
   /** Subscribe to a page's network events. Safe to call once per page. */
@@ -79,6 +91,7 @@ export class NetworkRecorder {
         durationMs: null,
         failure: null,
         issue: null,
+        provenance: this.currentProvenance,
       });
     });
 
@@ -96,6 +109,7 @@ export class NetworkRecorder {
         durationMs: null,
         failure: null,
         issue: null,
+        provenance: this.currentProvenance,
       };
 
       completed.status = status;
@@ -137,6 +151,7 @@ export class NetworkRecorder {
         durationMs: null,
         failure: null,
         issue: null,
+        provenance: this.currentProvenance,
       };
 
       completed.failure = failure.slice(0, 120);
@@ -184,6 +199,7 @@ export class NetworkRecorder {
       durationMs: entry.durationMs,
       failure: entry.failure,
       issue: entry.issue,
+      provenance: entry.provenance ?? this.currentProvenance,
     });
   }
 

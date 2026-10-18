@@ -27,8 +27,10 @@ import { collectSecrets, createScrubber, redactMessage } from './redaction.js';
 import { isSensitiveTestDataKey } from './redaction.js';
 import { evaluateExpectations, worstExpectationOutcome } from './expectations.js';
 import type {
+  ActionOutcome,
   ExecutionOptions,
   ExecutionReport,
+  NetworkEventProvenance,
   RedactionSummary,
   StepExecutionResult,
 } from './types.js';
@@ -161,12 +163,15 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
     }
 
     try {
+      evidence.setNetworkProvenance('harness-initial-load');
       await page.goto(plan.target.url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
     } catch (error) {
       warnings.push(
         `Initial navigation did not complete cleanly: ${redactMessage((error as Error).message, scrub)}. ` +
           'Steps were still attempted against whatever loaded.',
       );
+    } finally {
+      evidence.setNetworkProvenance('target-triggered');
     }
 
     const initialShot = await evidence.screenshot(page, 'initial', evidenceDir, screenshotPolicy);
@@ -183,7 +188,28 @@ export async function executeJourney(options: ExecutionOptions): Promise<Executi
       const stepStartedMs = Date.now();
       const stepStartedAt = new Date(stepStartedMs).toISOString();
 
-      const outcome = await dispatchAction(step, executionContext);
+      // Build 12G.2: Distinguish harness fallback navigation from explicit journey actions
+      const isFallbackNavigate =
+        step.action === 'navigate' &&
+        (Boolean((step as any).isFallback) ||
+          step.intent === 'navigate_to_target' ||
+          step.intent === 'harness_fallback_navigation' ||
+          (step.id === 'step-001' && (step as any).target?.type === 'url' && (step as any).target?.value === plan.target.url && (step as any).isFallback !== false));
+
+      const stepProvenance: NetworkEventProvenance = isFallbackNavigate
+        ? 'harness-fallback-navigation'
+        : step.action === 'navigate'
+          ? 'harness-navigation'
+          : 'target-triggered';
+
+      evidence.setNetworkProvenance(stepProvenance);
+      let outcome: ActionOutcome;
+      try {
+        outcome = await dispatchAction(step, executionContext);
+      } finally {
+        evidence.setNetworkProvenance('target-triggered');
+      }
+
       const urlAfter = executionContext.currentUrl();
 
       // Build 6.5: operator-declared expectations bound to this step, evaluated
