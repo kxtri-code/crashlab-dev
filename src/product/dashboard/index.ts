@@ -9,3 +9,4 @@ export * from './stylesAsset.js';
 export * from './clientBundle.js';
 export * from './apiClient.js';
 export * from './staticServer.js';
+export * from './artifactUtils.js';

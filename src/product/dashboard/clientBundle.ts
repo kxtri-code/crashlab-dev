@@ -223,6 +223,21 @@ export const CLIENT_JS_BUNDLE: string = `
           const terminalStatuses = ['completed', 'partial', 'failed', 'blocked', 'cancelled'];
           if (terminalStatuses.includes(state.selectedRun.status)) {
             this.stop();
+            // Build 12G.1: Auto-fetch artifacts on terminal completion without requiring manual refresh
+            try {
+              const [artRes, candRes] = await Promise.allSettled([
+                api.getJson('/api/v1/runs/' + runId + '/artifacts?workspaceId=' + wsId),
+                api.getJson('/api/v1/runs/' + runId + '/candidates?workspaceId=' + wsId),
+              ]);
+              if (artRes.status === 'fulfilled' && artRes.value.success) {
+                state.artifacts = artRes.value.data.artifacts || [];
+              }
+              if (candRes.status === 'fulfilled' && candRes.value.success) {
+                state.candidates = candRes.value.data.candidates || [];
+              }
+            } catch {
+              // Non-blocking fetch on terminal transition
+            }
             renderApp();
             return;
           }
@@ -419,6 +434,29 @@ export const CLIENT_JS_BUNDLE: string = `
     }
   }
 
+  // --- Artifact Filename Helper ---
+  function resolveArtifactFilename(type, id, contentType) {
+    const ct = (contentType || '').toLowerCase().trim();
+    const t = (type || '').toLowerCase().trim();
+    let ext = 'bin';
+    if (ct.includes('application/json') || ct.includes('json') || t === 'execution' || t === 'anomalies') {
+      ext = 'json';
+    } else if (ct.includes('text/plain') || t === 'log') {
+      ext = t === 'log' ? 'log' : 'txt';
+    } else if (ct.includes('text/html')) {
+      ext = 'html';
+    } else if (ct.includes('text/csv')) {
+      ext = 'csv';
+    } else if (ct.includes('image/png')) {
+      ext = 'png';
+    } else if (ct.includes('image/jpeg') || ct.includes('image/jpg')) {
+      ext = 'jpg';
+    }
+    const safeType = (type || 'artifact').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeId = (id || '').slice(0, 8).replace(/[^a-zA-Z0-9_-]/g, '_') || '00000000';
+    return 'artifact-' + safeType + '-' + safeId + '.' + ext;
+  }
+
   async function downloadArtifact(artifactId) {
     if (!state.currentWorkspace) return;
     const art = state.artifacts.find(a => a.id === artifactId);
@@ -429,7 +467,7 @@ export const CLIENT_JS_BUNDLE: string = `
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = \`artifact-\${art.type}-\${art.id.slice(0, 8)}.\${art.contentType.includes('json') ? 'json' : 'bin'}\`;
+      a.download = resolveArtifactFilename(art.type, art.id, art.contentType);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
