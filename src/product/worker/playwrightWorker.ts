@@ -22,6 +22,7 @@ import { executeJourney } from '../../executor/executor.js';
 import { buildAnomalyReport } from '../../anomaly/report.js';
 import { buildCandidateReport } from '../../review/candidateReport.js';
 import { openBrowserSession, type BrowserSession } from '../../scout/browser.js';
+import { formatWorkerExecutionLog } from './executionLog.js';
 
 export class PlaywrightExecutionWorker implements ExecutionWorker {
   private readonly activeSessions = new Map<string, BrowserSession>();
@@ -209,9 +210,16 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
         {
           type: 'log',
           relativePath: `runs/${input.runId}/execution.log`,
-          contentType: 'text/plain',
+          contentType: 'text/plain; charset=utf-8',
           payload: Buffer.from(
-            `[RUN ${input.runId}] Journey: "${input.journey.id}" | Status: ${execReport.status} | Steps: ${execReport.stepCounts.passed}/${execReport.stepCounts.total} | Anomalies: ${anomalyReport.summary.totalSignals} | Candidates: ${candidateReport.candidates.length}\n`,
+            formatWorkerExecutionLog({
+              runId: input.runId,
+              journey: input.journey,
+              target: input.target,
+              execReport,
+              anomalyReport,
+              candidateReport,
+            }),
             'utf8',
           ),
         },

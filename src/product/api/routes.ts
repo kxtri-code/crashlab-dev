@@ -794,6 +794,34 @@ export async function handleProductApiRequest(
       return;
     }
 
+    // Bounded candidate reproduction endpoint: POST /api/v1/runs/:runId/reproduce
+    const runReproduceMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/reproduce$/);
+    if (runReproduceMatch && method === 'POST') {
+      const runId = runReproduceMatch[1]!;
+      const body = await parseBody<{
+        workspaceId?: string;
+        attempts?: number;
+        candidateId?: string;
+      }>(req);
+      const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const result = await context.service.runBoundedReproduction(
+        workspaceId,
+        runId,
+        actorUserId,
+        {
+          attempts: body.attempts,
+          candidateId: body.candidateId,
+        },
+      );
+      sendJson(res, 200, { success: true, data: result, requestId }, requestId);
+      return;
+    }
+
     // Queue status detail endpoint: GET /api/v1/runs/:runId/queue
     const runQueueMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)\/queue$/);
     if (runQueueMatch && method === 'GET') {

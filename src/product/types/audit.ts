@@ -32,6 +32,7 @@ export type AuditEventType =
   | 'run.claimed'
   | 'run.cancelled'
   | 'run.retried'
+  | 'run.reproduced'
   | 'run.failed';
 
 export interface AuditEvent {

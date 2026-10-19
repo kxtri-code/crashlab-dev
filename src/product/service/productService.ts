@@ -9,6 +9,8 @@
  *  - Non-negotiable trust invariants: safeTestMode, confirmed: false, confirmedBug: false.
  */
 
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { User, CreateUserInput } from '../types/user.js';
 import type { Workspace, WorkspaceMember, CreateWorkspaceInput, AddWorkspaceMemberInput, WorkspaceRole } from '../types/workspace.js';
 import type { Project, CreateProjectInput } from '../types/project.js';
@@ -16,11 +18,17 @@ import type { TargetEnvironment, CreateTargetEnvironmentInput } from '../types/t
 import type { ProductApprovedJourney, CreateApprovedJourneyInput } from '../types/journey.js';
 import type { TestRun, CreateTestRunInput, RunStatus } from '../types/run.js';
 import type { RunArtifact, RegisterArtifactInput, StoreArtifactInput } from '../types/artifact.js';
-import type { CandidateReference, RegisterCandidateReferenceInput, ProductCandidateStatus } from '../types/candidate.js';
+import type { CandidateReference, RegisterCandidateReferenceInput, ProductCandidateStatus, CandidateReproductionStatus, CandidateReproductionDetails } from '../types/candidate.js';
 import type { AuditEvent } from '../types/audit.js';
 import type { ProductRepositories } from '../repository/interfaces.js';
 import type { BlobStore, BlobLocator, BlobMetadata, BlobPayload } from '../blob/interfaces.js';
 import { resolveBlobStore } from '../blob/config.js';
+import { reproduceSignals } from '../../reproducer/reproducer.js';
+import type { ReproductionReport } from '../../reproducer/types.js';
+import type { JourneyPlan } from '../../journey/types.js';
+import type { ExecutionReport } from '../../executor/types.js';
+import type { AnomalyReport } from '../../anomaly/report.js';
+import type { AnomalyKind, EvidenceType } from '../../anomaly/types.js';
 import type { RunQueueRepository } from '../queue/repository.js';
 import { InMemoryRunQueueRepository } from '../queue/repository.js';
 import type { RunQueueItem } from '../queue/types.js';
@@ -81,6 +89,7 @@ export interface ProductServiceDependencies {
   readonly blobStore?: BlobStore;
   readonly idGenerator?: IdGenerator;
   readonly now?: () => Date;
+  readonly reproduceSignalsFn?: typeof reproduceSignals;
 }
 
 export class ProductService {
@@ -89,6 +98,7 @@ export class ProductService {
   private readonly blobs: BlobStore;
   private readonly ids: IdGenerator;
   private readonly clock: () => Date;
+  private readonly reproduceSignalsFn: typeof reproduceSignals;
 
   constructor(deps: ProductServiceDependencies) {
     this.repos = deps.repositories;
@@ -96,6 +106,7 @@ export class ProductService {
     this.blobs = deps.blobStore ?? resolveBlobStore();
     this.ids = deps.idGenerator ?? defaultIdGenerator;
     this.clock = deps.now ?? (() => new Date());
+    this.reproduceSignalsFn = deps.reproduceSignalsFn ?? reproduceSignals;
   }
 
   get blobStore(): BlobStore {
@@ -1077,12 +1088,87 @@ export class ProductService {
     return saved;
   }
 
+  private enrichCandidateWithReproduction(
+    candidate: CandidateReference,
+    reproReport?: ReproductionReport | null,
+  ): CandidateReference {
+    if (candidate.reproductionDetails && candidate.reproductionStatus) {
+      return candidate;
+    }
+
+    if (!reproReport) {
+      return {
+        ...candidate,
+        reproductionStatus: 'not-tested',
+        reproduced: false,
+        reproductionRatio: 'Not tested',
+        reproductionDetails: {
+          state: 'not-tested',
+          attemptsRequested: 0,
+          attemptsCompleted: 0,
+          signalsEvaluated: 0,
+          signalsReproduced: 0,
+          recurrenceRatio: '0/0',
+          finalClassification: 'not-tested',
+        },
+      };
+    }
+
+    const match = reproReport.results.find((r) => {
+      if (r.anomalyId && (r.anomalyId === candidate.candidateId || r.anomalyId === candidate.id)) return true;
+      if (r.ruleId && r.ruleId === candidate.ruleId) return true;
+      return false;
+    });
+
+    if (!match) {
+      return {
+        ...candidate,
+        reproductionStatus: 'not-tested',
+        reproduced: false,
+        reproductionRatio: 'Not tested',
+        reproductionDetails: {
+          state: 'not-tested',
+          attemptsRequested: reproReport.reproducer.attemptsRequested,
+          attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+          signalsEvaluated: reproReport.summary.eligibleSignals,
+          signalsReproduced: reproReport.summary.reproduced,
+          recurrenceRatio: '0/0',
+          finalClassification: 'not-tested',
+        },
+      };
+    }
+
+    const state: CandidateReproductionStatus =
+      match.classification === 'reproduced'
+        ? 'reproduced'
+        : match.classification === 'not-reproduced'
+        ? 'not-reproduced'
+        : 'inconclusive';
+
+    return {
+      ...candidate,
+      reproductionStatus: state,
+      reproduced: state === 'reproduced',
+      reproductionRatio: match.reproductionRatio,
+      reproductionDetails: {
+        state,
+        attemptsRequested: reproReport.reproducer.attemptsRequested,
+        attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+        signalsEvaluated: reproReport.summary.eligibleSignals,
+        signalsReproduced: reproReport.summary.reproduced,
+        recurrenceRatio: match.reproductionRatio,
+        finalClassification: match.classification,
+      },
+    };
+  }
+
   async listCandidates(workspaceId: string, projectId: string, actorUserId: string): Promise<readonly CandidateReference[]> {
     const membership = await this.getMembership(workspaceId, actorUserId);
     if (!canViewReports(membership, { workspaceId })) {
       throw new TenantAccessDeniedError(`Access denied to view candidate reports in workspace "${workspaceId}".`);
     }
-    return this.repos.candidates.listByProject(workspaceId, projectId);
+    const candidates = await this.repos.candidates.listByProject(workspaceId, projectId);
+    return candidates.map((c) => this.enrichCandidateWithReproduction(c, null));
   }
 
   async listCandidatesByRun(workspaceId: string, runId: string, actorUserId: string): Promise<readonly CandidateReference[]> {
@@ -1090,7 +1176,253 @@ export class ProductService {
     if (!canViewReports(membership, { workspaceId })) {
       throw new TenantAccessDeniedError(`Access denied to view candidate reports in workspace "${workspaceId}".`);
     }
-    return this.repos.candidates.listByRun(workspaceId, runId);
+    const candidates = await this.repos.candidates.listByRun(workspaceId, runId);
+    let reproReport: ReproductionReport | null = null;
+    try {
+      const artifacts = await this.repos.artifacts.listByRun(workspaceId, runId);
+      const reproArt = artifacts.find((a) => a.type === 'reproduction');
+      if (reproArt) {
+        const { payload } = await this.getArtifactContent(workspaceId, reproArt.id, actorUserId);
+        reproReport = JSON.parse(payload.content.toString('utf8')) as ReproductionReport;
+      }
+    } catch {
+      // Repro report lookup is best-effort enrichment
+    }
+    return candidates.map((c) => this.enrichCandidateWithReproduction(c, reproReport));
+  }
+
+  /**
+   * Runs bounded reproduction (strict max 3 attempts) for eligible candidates in a run.
+   *
+   * Guarantees:
+   * - Strict bounds: at most 3 attempts, fresh browser contexts for each attempt.
+   * - Safe-test mode permanently active, no destructive actions.
+   * - Invariants strictly preserved: confirmedBug: false, confirmed: false.
+   * - Saves 'reproduction' artifact and updates candidate reproduction states.
+   */
+  async runBoundedReproduction(
+    workspaceId: string,
+    runId: string,
+    actorUserId: string,
+    options?: {
+      attempts?: number;
+      candidateId?: string;
+    },
+  ): Promise<{
+    reproductionReport: ReproductionReport;
+    candidates: readonly CandidateReference[];
+  }> {
+    const membership = await this.getMembership(workspaceId, actorUserId);
+    if (!canRunProject(membership, { workspaceId })) {
+      throw new TenantAccessDeniedError(`Access denied: Actor cannot run reproduction in workspace "${workspaceId}".`);
+    }
+
+    const run = await this.getRun(workspaceId, runId, actorUserId);
+    const target = await this.getTarget(workspaceId, run.targetEnvironmentId, actorUserId);
+    const journey = await this.getJourney(workspaceId, run.journeyId, actorUserId);
+
+    const candidates = await this.repos.candidates.listByRun(workspaceId, runId);
+    if (candidates.length === 0) {
+      throw new Error(`No candidate findings found for run "${runId}" to reproduce.`);
+    }
+
+    // Strict maximum of 3 attempts enforcement (Requirement 3)
+    const requestedAttempts = options?.attempts ?? 3;
+    const boundedAttempts = Math.min(3, Math.max(1, requestedAttempts));
+
+    // Retrieve or construct anomaly report
+    const artifacts = await this.repos.artifacts.listByRun(workspaceId, runId);
+    const anomArtifact = artifacts.find((a) => a.type === 'anomalies');
+    let anomalyReport: AnomalyReport;
+
+    if (anomArtifact) {
+      const { payload } = await this.getArtifactContent(workspaceId, anomArtifact.id, actorUserId);
+      anomalyReport = JSON.parse(payload.content.toString('utf8')) as AnomalyReport;
+    } else {
+      // Synthesize anomaly report from candidate references
+      anomalyReport = {
+        schemaVersion: '1.0',
+        executionReport: `runs/${runId}/execution.json`,
+        journeyReport: `journeys/${journey.id}.json`,
+        executionStatus: 'passed',
+        goal: journey.goal,
+        journeyType: 'custom',
+        summary: {
+          totalSignals: candidates.length,
+          httpErrors: candidates.filter((c) => c.ruleId.includes('HTTP')).length,
+          networkFailures: candidates.filter((c) => c.ruleId.includes('NETWORK')).length,
+          consoleErrors: candidates.filter((c) => c.ruleId.includes('CONSOLE')).length,
+          pageErrors: 0,
+          timeouts: 0,
+          navigationSignals: 0,
+          uiStateSignals: 0,
+          duplicateRequestSignals: 0,
+          stepFailureSignals: 0,
+          ruleIds: [...new Set(candidates.map((c) => c.ruleId))].sort(),
+        },
+        anomalies: candidates.map((c, idx) => ({
+          id: c.candidateId || c.id,
+          ruleId: c.ruleId as any,
+          kind: (c.ruleId.includes('HTTP') ? 'network-failure' : 'console') as AnomalyKind,
+          signalLevel: 'error',
+          status: 'observed',
+          message: `Observed candidate finding ${c.ruleId}`,
+          stepId: null,
+          stepOrder: null,
+          source: { executionReport: `runs/${runId}/execution.json`, evidenceType: (c.ruleId.includes('HTTP') ? 'network' : 'console') as EvidenceType, eventIndex: idx },
+          details: { classification: c.classification },
+          possiblyExpected: false,
+          confirmed: false,
+          occurrences: 1,
+        })),
+        warnings: [],
+        analyzer: { mode: 'deterministic', version: '0.1.0' },
+        environment: {
+          fingerprint: null,
+          origin: target.targetOrigin || 'unknown',
+          browserName: 'Chromium',
+          browserVersion: 'unknown',
+          environmentId: target.environment ?? null,
+          applicationBuildId: target.appBuildId ?? null,
+        },
+        interpretation: { confirmedBug: false, requiresInvestigation: true, note: 'reproduction-candidate' },
+      };
+    }
+
+    // Build journey plan
+    const isStagingPilot =
+      journey.goal.toLowerCase().includes('staging') ||
+      journey.goal.toLowerCase().includes('pilot') ||
+      journey.goal.toLowerCase().includes('interact');
+
+    const allowsInteraction = journey.allowedActions.some((a) =>
+      ['click', 'interact', 'probe'].includes(a.toLowerCase().trim()),
+    );
+
+    const defaultSteps: any[] = [
+      {
+        id: 'step-001',
+        order: 1,
+        intent: 'navigate_to_origin',
+        action: 'navigate',
+        description: `Navigate to target environment origin ${target.targetUrl}`,
+        targetElementIds: [],
+        locatorCandidates: [],
+        expectedOutcome: 'Page loads with HTTP 200 and DOM ready',
+        confidence: 1.0,
+        executable: true,
+        source: { report: 'synthetic', elementIds: [] },
+        isFallback: false,
+      },
+    ];
+
+    if (isStagingPilot && allowsInteraction) {
+      defaultSteps.push({
+        id: 'step-002',
+        order: 2,
+        intent: 'trigger_interaction',
+        action: 'click',
+        description: 'Trigger staging pilot interaction and controlled probe',
+        targetElementIds: ['btn-interact'],
+        locatorCandidates: ['#btn-interact', 'button#btn-interact'],
+        expectedOutcome: 'Staging pilot responds to interaction and triggers controlled probe',
+        confidence: 1.0,
+        executable: false,
+        source: { report: 'synthetic', elementIds: ['btn-interact'] },
+        isFallback: false,
+      });
+    }
+
+    const plan: JourneyPlan = (journey as any).plan ?? {
+      schemaVersion: '1.0',
+      goal: journey.goal,
+      normalizedGoal: journey.goal.toLowerCase().trim(),
+      journeyType: 'custom',
+      target: {
+        url: target.targetUrl,
+        finalUrl: target.targetUrl,
+        title: target.name,
+      },
+      steps: (journey as any).steps ?? defaultSteps,
+      assumptions: [],
+      warnings: [],
+      missingInformation: [],
+      planner: { mode: 'heuristic', version: '0.1.0' },
+    };
+
+    // Execute bounded reproduction with fresh browser contexts
+    const reproReport = await this.reproduceSignalsFn({
+      anomalies: anomalyReport,
+      journey: plan,
+      attempts: boundedAttempts,
+      authorized: true,
+      anomalyPath: `runs/${runId}/anomalies.json`,
+      journeyPath: `journeys/${journey.id}.json`,
+      executionPath: `runs/${runId}/execution.json`,
+      includePossiblyExpected: false,
+      outputDir: join(tmpdir(), `repro-${runId}-${Date.now()}`),
+      provenance: {
+        environmentId: target.environment,
+        appBuildId: target.appBuildId,
+      },
+    });
+
+    // Invariant checks: confirmedBug: false must be preserved
+    if ((reproReport.interpretation as any).confirmedBug !== false) {
+      throw new Error('Trust invariant violation: confirmedBug must remain false.');
+    }
+
+    // Persist reproduction artifact
+    const storedArt = await this.storeArtifact(
+      {
+        workspaceId,
+        runId,
+        type: 'reproduction',
+        content: Buffer.from(JSON.stringify(reproReport, null, 2), 'utf8'),
+        contentType: 'application/json',
+      },
+      actorUserId,
+    );
+
+    // Update test_run reproduction report ref
+    await this.repos.runs.update({
+      ...run,
+      reproductionReportRef: storedArt.artifact.id,
+      updatedAt: this.timestamp(),
+    });
+
+    // Update candidate references in repository
+    const updatedCandidates: CandidateReference[] = [];
+    for (const cand of candidates) {
+      const match = reproReport.results.find((r) => {
+        if (r.anomalyId && (r.anomalyId === cand.candidateId || r.anomalyId === cand.id)) return true;
+        if (r.ruleId && r.ruleId === cand.ruleId) return true;
+        return false;
+      });
+
+      const isRepro = match?.classification === 'reproduced';
+      const updatedCand: CandidateReference = {
+        ...cand,
+        reproduced: isRepro,
+        updatedAt: this.timestamp(),
+      };
+      const saved = await this.repos.candidates.update(updatedCand);
+      updatedCandidates.push(this.enrichCandidateWithReproduction(saved, reproReport));
+    }
+
+    // Record audit event
+    await this.recordAudit(workspaceId, actorUserId, 'run.reproduced', 'test_run', runId, {
+      attemptsRequested: requestedAttempts,
+      attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+      signalsEvaluated: reproReport.summary.eligibleSignals,
+      signalsReproduced: reproReport.summary.reproduced,
+      summary: reproReport.summary,
+    });
+
+    return {
+      reproductionReport: reproReport,
+      candidates: updatedCandidates,
+    };
   }
 
   // --- Run Artifacts ---------------------------------------------------------

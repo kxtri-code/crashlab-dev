@@ -45,3 +45,12 @@ export function resolveArtifactFilename(type: string, id: string, contentType?: 
   const ext = resolveArtifactExtension(type, contentType);
   return `artifact-${safeType}-${safeId}.${ext}`;
 }
+
+/**
+ * Formats byte size into human-readable representation without misleading "0 KB" for non-zero files.
+ */
+export function formatArtifactSize(bytes?: number | null): string {
+  if (typeof bytes !== 'number' || isNaN(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}

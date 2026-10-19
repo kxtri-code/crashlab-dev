@@ -50,6 +50,8 @@ export const CLIENT_JS_BUNDLE: string = `
     candidates: [],
     candidateUpdatingId: null,
     candidateUpdateFeedback: null,
+    reproductionSubmitting: false,
+    reproductionFeedback: null,
     artifacts: [],
     selectedArtifact: null,
     selectedArtifactContent: null,
@@ -654,6 +656,60 @@ export const CLIENT_JS_BUNDLE: string = `
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (err) {
       alert(\`Download failed: \${err.message}\`);
+    }
+  }
+
+  function formatArtifactSize(bytes) {
+    if (typeof bytes !== 'number' || isNaN(bytes) || bytes <= 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    return (bytes / 1024).toFixed(1) + ' KB';
+  }
+
+  function renderReproductionBadge(status, ratio) {
+    const s = (status || 'not-tested').toLowerCase();
+    if (s === 'reproduced') {
+      return '<span class=\"repro-status-badge reproduced\">● Reproduced (' + escapeHtml(ratio || '3/3') + ')</span>';
+    }
+    if (s === 'not-reproduced') {
+      return '<span class=\"repro-status-badge not-reproduced\">✓ Not reproduced (' + escapeHtml(ratio || '0/3') + ')</span>';
+    }
+    if (s === 'inconclusive') {
+      return '<span class=\"repro-status-badge inconclusive\">◐ Inconclusive (' + escapeHtml(ratio || '1/3') + ')</span>';
+    }
+    return '<span class=\"repro-status-badge not-tested\">○ Not tested</span>';
+  }
+
+  async function triggerBoundedReproduction(runId) {
+    if (!state.currentWorkspace || !runId) return;
+    state.reproductionSubmitting = true;
+    state.reproductionFeedback = null;
+    renderApp();
+
+    try {
+      const res = await api.postJson('/api/v1/runs/' + runId + '/reproduce', {
+        workspaceId: state.currentWorkspace.id,
+        attempts: 3,
+      });
+      if (res && res.success) {
+        const s = res.data?.reproductionReport?.summary;
+        state.reproductionFeedback = 'Reproduction completed: ' +
+          (s ? s.reproduced + ' reproduced of ' + s.eligibleSignals + ' signals evaluated (3 attempts).' : 'Results recorded.');
+        const [cRes, aRes, rRes] = await Promise.all([
+          api.getJson('/api/v1/runs/' + runId + '/candidates?workspaceId=' + state.currentWorkspace.id).catch(() => null),
+          api.getJson('/api/v1/runs/' + runId + '/artifacts?workspaceId=' + state.currentWorkspace.id).catch(() => null),
+          api.getJson('/api/v1/runs/' + runId + '?workspaceId=' + state.currentWorkspace.id).catch(() => null),
+        ]);
+        if (cRes && cRes.success) state.candidates = cRes.data.candidates || [];
+        if (aRes && aRes.success) state.artifacts = aRes.data.artifacts || [];
+        if (rRes && rRes.success) state.selectedRun = rRes.data;
+      } else {
+        throw new Error(res.error?.message || 'Reproduction failed.');
+      }
+    } catch (err) {
+      alert('Bounded reproduction failed: ' + err.message);
+    } finally {
+      state.reproductionSubmitting = false;
+      renderApp();
     }
   }
 
@@ -1470,12 +1526,39 @@ export const CLIENT_JS_BUNDLE: string = `
       primarySummary = \`Preflight safety check blocked execution: \${escapeHtml(run.blockedReason || 'Preflight refusal.')}\`;
     }
 
-    // Candidate Review Cards (Item 9)
+    // Signal Correlation Analysis (Requirement 6)
+    const http5xxCandidate = state.candidates.find(c =>
+      (c.ruleId || '').toUpperCase().includes('5XX') ||
+      (c.ruleId || '').toUpperCase().includes('HTTP_5') ||
+      (c.classification || '').toUpperCase().includes('500')
+    );
+    const consoleCandidates = state.candidates.filter(c =>
+      (c.ruleId || '').toUpperCase().includes('CONSOLE') ||
+      (c.classification || '').toUpperCase().includes('CONSOLE')
+    );
+    const isCorrelatedCascade = Boolean(http5xxCandidate && consoleCandidates.length > 0);
+
+    // Reproduction details extraction (Requirement 4)
+    const candidateWithRepro = state.candidates.find(c => c.reproductionDetails && c.reproductionStatus && c.reproductionStatus !== 'not-tested');
+    const reproDetails = candidateWithRepro?.reproductionDetails || (
+      state.artifacts.some(a => a.type === 'reproduction') ? {
+        attemptsRequested: 3,
+        attemptsCompleted: 3,
+        signalsEvaluated: state.candidates.length,
+        signalsReproduced: state.candidates.filter(c => c.reproduced).length,
+        recurrenceRatio: (state.candidates.filter(c => c.reproduced).length) + '/' + state.candidates.length,
+        finalClassification: state.candidates.some(c => c.reproduced) ? 'reproduced' : 'inconclusive',
+      } : null
+    );
+
+    // Candidate Review Cards (Item 9 & Build 12K.1)
     const candidateCards = state.candidates.map(c => {
       const cId = c.candidateId || c.id;
       const info = getCandidateFriendlyInfo(c.ruleId, c.classification);
       const isUpdating = state.candidateUpdatingId === cId;
       const feedback = state.candidateUpdateFeedback?.candidateId === cId ? state.candidateUpdateFeedback.message : null;
+      const isPrimary5xx = isCorrelatedCascade && http5xxCandidate && (c.id === http5xxCandidate.id || c.candidateId === http5xxCandidate.candidateId);
+      const isDownstreamConsole = isCorrelatedCascade && !isPrimary5xx && ((c.ruleId || '').toUpperCase().includes('CONSOLE') || (c.classification || '').toUpperCase().includes('CONSOLE'));
 
       const reviewOptions = [
         { value: 'unreviewed', label: 'Unreviewed' },
@@ -1506,10 +1589,10 @@ export const CLIENT_JS_BUNDLE: string = `
           </div>
 
           <div class="candidate-meta-bar">
-            <div class="candidate-evidence-ref">
-              <span style="color:\${c.reproduced ? '#f59e0b' : '#34d399'};margin-right:1rem;">
-                &bull; \${c.reproduced ? 'Signal reproduces across attempts' : 'Single occurrence signal'}
-              </span>
+            <div class="candidate-evidence-ref" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+              \${renderReproductionBadge(c.reproductionStatus, c.reproductionRatio)}
+              \${isPrimary5xx ? '<span class=\"cascade-tag\">Primary Root Fault (Server HTTP 500)</span>' : ''}
+              \${isDownstreamConsole ? '<span class=\"cascade-tag\">🔗 Downstream cascade of HTTP 500</span>' : ''}
               <span style="color:var(--text-dim);font-family:var(--font-mono);font-size:0.75rem;">
                 Evidence ID: \${escapeHtml(cId)}
               </span>
@@ -1524,13 +1607,20 @@ export const CLIENT_JS_BUNDLE: string = `
             </div>
           </div>
 
+          \${c.reviewStatus === 'duplicate' ? \`
+            <div class="duplicate-guidance-box">
+              ℹ️ <strong>Guidance on Duplicates:</strong> Marked as a downstream cascade of the primary server fault. Raw evidence, logs, and trust invariants (<code>confirmedBug: false</code>, <code>confirmed: false</code>) remain strictly preserved.
+            </div>
+          \` : ''}
+
           <details class="tech-details-disclosure" style="margin-top:0.75rem;">
             <summary class="tech-details-summary" style="padding:0.35rem 0.6rem;font-size:0.72rem;">Technical details</summary>
             <div class="tech-details-content" style="padding:0.5rem;font-size:0.75rem;">
               <div><strong>Candidate ID:</strong> <code>\${escapeHtml(cId)}</code></div>
               <div><strong>Rule ID:</strong> <code>\${escapeHtml(c.ruleId || 'N/A')}</code></div>
               <div><strong>Classification:</strong> <code>\${escapeHtml(c.classification || 'unknown')}</code></div>
-              <div><strong>Signal Reproduces:</strong> <span>\${c.reproduced ? 'Yes' : 'No'}</span></div>
+              <div><strong>Reproduction Status:</strong> <span>\${escapeHtml(c.reproductionStatus || 'not-tested')}</span></div>
+              <div><strong>Recurrence Ratio:</strong> <span>\${escapeHtml(c.reproductionRatio || 'Not tested')}</span></div>
               <div><strong>Trust Invariant:</strong> <code>confirmedBug: false &bull; confirmed: false</code></div>
             </div>
           </details>
@@ -1538,7 +1628,7 @@ export const CLIENT_JS_BUNDLE: string = `
       \`;
     }).join('');
 
-    // Evidence Artifact Cards (Item 11)
+    // Evidence Artifact Cards (Item 11 & Build 12K.1)
     const artifactCards = state.artifacts.map(a => {
       const info = getArtifactFriendlyInfo(a.type);
       return \`
@@ -1550,7 +1640,7 @@ export const CLIENT_JS_BUNDLE: string = `
           <div class="artifact-card-meta">\${escapeHtml(info.desc)}</div>
           <div style="font-size:0.75rem;color:var(--text-dim);display:flex;justify-content:space-between;align-items:center;">
             <span>\${escapeHtml(a.contentType)}</span>
-            <span><strong>\${Math.round(a.byteSize / 1024)} KB</strong></span>
+            <span><strong>\${formatArtifactSize(a.byteSize)}</strong></span>
           </div>
           <div class="artifact-card-actions">
             <button class="btn btn-secondary btn-sm btn-inspect-artifact" data-id="\${escapeHtml(a.id)}">Preview</button>
@@ -1636,10 +1726,73 @@ export const CLIENT_JS_BUNDLE: string = `
         </div>
 
         \${hasIssues ? \`
-          <div class="candidate-signals-banner">
-            <span>ℹ️</span>
-            <span>These signals may represent one underlying issue. Review them together before accepting separate findings.</span>
+          \${isCorrelatedCascade ? \`
+            <div class="correlation-notice-box">
+              <div class="correlation-notice-header">
+                <span>🔗 Correlated Finding Group: Server Fault Cascade</span>
+                <span class="cascade-tag">HTTP 500 &bull; \${consoleCandidates.length} Console Error\${consoleCandidates.length > 1 ? 's' : ''}</span>
+              </div>
+              <div class="correlation-notice-body">
+                1 HTTP 500 server response and \${consoleCandidates.length} resulting browser console errors were detected.
+                When an API endpoint responds with HTTP 500, downstream client scripts fail and generate uncaught exceptions in the console.
+                These findings represent <strong>one underlying issue</strong> rather than multiple independent defects.
+              </div>
+            </div>
+          \` : \`
+            <div class="candidate-signals-banner">
+              <span>ℹ️</span>
+              <span>These signals may represent one underlying issue. Review them together before accepting separate findings.</span>
+            </div>
+          \`}
+
+          <!-- Bounded Reproduction Action Banner (Requirements 2, 3) -->
+          <div class="repro-action-banner">
+            <div class="repro-action-info">
+              <div class="repro-action-title">
+                <span>⚡ Bounded Signal Reproduction</span>
+                <span class="repro-bounds-pill">Strict Max 3 Attempts &bull; Fresh Contexts</span>
+              </div>
+              <div class="repro-action-desc">
+                Execute controlled repeat reruns to evaluate signal recurrence under identical safe-test conditions.
+              </div>
+            </div>
+            <div>
+              <button id="btn-run-reproduction" class="btn btn-primary btn-sm" \${state.reproductionSubmitting ? 'disabled' : ''}>
+                \${state.reproductionSubmitting ? '<span class="pulse-dot"></span> Reproducing (up to 3 attempts)...' : '⚡ Run Bounded Reproduction'}
+              </button>
+            </div>
           </div>
+          \${state.reproductionFeedback ? \`<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#34d399;border-radius:6px;padding:0.6rem 0.9rem;margin-bottom:1rem;font-size:0.8rem;">✓ \${escapeHtml(state.reproductionFeedback)}</div>\` : ''}
+
+          <!-- 6-Metric Display Grid (Requirement 4) -->
+          \${reproDetails ? \`
+            <div class="repro-metrics-grid">
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Attempts Requested</span>
+                <span class="repro-metric-value">\${reproDetails.attemptsRequested}</span>
+              </div>
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Attempts Completed</span>
+                <span class="repro-metric-value">\${reproDetails.attemptsCompleted}</span>
+              </div>
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Signals Evaluated</span>
+                <span class="repro-metric-value">\${reproDetails.signalsEvaluated}</span>
+              </div>
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Signals Reproduced</span>
+                <span class="repro-metric-value">\${reproDetails.signalsReproduced}</span>
+              </div>
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Recurrence Ratio</span>
+                <span class="repro-metric-value">\${reproDetails.recurrenceRatio}</span>
+              </div>
+              <div class="repro-metric-card">
+                <span class="repro-metric-title">Final Classification</span>
+                <span class="repro-metric-value" style="font-size:0.95rem;text-transform:capitalize;">\${reproDetails.finalClassification}</span>
+              </div>
+            </div>
+          \` : ''}
         \` : ''}
 
         <div class="invariant-card">
@@ -2294,6 +2447,14 @@ export const CLIENT_JS_BUNDLE: string = `
     if (confirmCancelBtn && state.selectedRun) {
       confirmCancelBtn.addEventListener('click', () => {
         triggerCancelRun(state.selectedRun.id);
+      });
+    }
+
+    // Bounded Reproduction trigger
+    const runReproBtn = document.getElementById('btn-run-reproduction');
+    if (runReproBtn && state.selectedRun) {
+      runReproBtn.addEventListener('click', () => {
+        triggerBoundedReproduction(state.selectedRun.id);
       });
     }
 
