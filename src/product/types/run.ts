@@ -48,6 +48,8 @@ export interface TestRun {
   readonly anomalyReportRef?: string;
   readonly reproductionReportRef?: string;
   readonly candidatesReportRef?: string;
+  readonly anomalyCount?: number;
+  readonly candidateCount?: number;
   readonly baselineRef?: string;
   readonly blockedReason?: string;
   readonly failureReason?: string;

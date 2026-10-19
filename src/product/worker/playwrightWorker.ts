@@ -20,6 +20,7 @@ import { validateProductTargetPreflight } from '../service/preflightAdapter.js';
 import type { JourneyPlan } from '../../journey/types.js';
 import { executeJourney } from '../../executor/executor.js';
 import { buildAnomalyReport } from '../../anomaly/report.js';
+import { buildCandidateReport } from '../../review/candidateReport.js';
 import { openBrowserSession, type BrowserSession } from '../../scout/browser.js';
 
 export class PlaywrightExecutionWorker implements ExecutionWorker {
@@ -170,6 +171,21 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
         journeyPath: `journeys/${input.journey.id}.json`,
       });
 
+      // 6.5 Build candidate report
+      const candidateReport = buildCandidateReport({
+        journey: plan,
+        execution: execReport,
+        anomalies: anomalyReport,
+        baseline: null,
+        reproduction: null,
+        paths: {
+          execution: `runs/${input.runId}/execution.json`,
+          anomalies: `runs/${input.runId}/anomalies.json`,
+          reproduction: null,
+          journey: `journeys/${input.journey.id}.json`,
+        },
+      });
+
       // 7. Format artifacts for storage
       const artifacts: WorkerArtifactPayload[] = [
         {
@@ -185,11 +201,17 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
           payload: Buffer.from(JSON.stringify(anomalyReport, null, 2), 'utf8'),
         },
         {
+          type: 'candidates',
+          relativePath: `runs/${input.runId}/candidates.json`,
+          contentType: 'application/json',
+          payload: Buffer.from(JSON.stringify(candidateReport, null, 2), 'utf8'),
+        },
+        {
           type: 'log',
           relativePath: `runs/${input.runId}/execution.log`,
           contentType: 'text/plain',
           payload: Buffer.from(
-            `[RUN ${input.runId}] Journey: "${input.journey.id}" | Status: ${execReport.status} | Steps: ${execReport.stepCounts.passed}/${execReport.stepCounts.total}\n`,
+            `[RUN ${input.runId}] Journey: "${input.journey.id}" | Status: ${execReport.status} | Steps: ${execReport.stepCounts.passed}/${execReport.stepCounts.total} | Anomalies: ${anomalyReport.summary.totalSignals} | Candidates: ${candidateReport.candidates.length}\n`,
             'utf8',
           ),
         },
@@ -207,6 +229,7 @@ export class PlaywrightExecutionWorker implements ExecutionWorker {
         summary: {
           executionStatus: execReport.status,
           anomaliesCount: anomalyReport.summary.totalSignals,
+          candidateCount: candidateReport.candidates.length,
           safeTestMode: true,
           confirmedBug: false,
         },

@@ -33,8 +33,8 @@ export function canonicalJourneyContent(journey: JourneyPlan): string {
       id: step.id,
       order: step.order,
       action: step.action,
-      targetElementIds: [...step.targetElementIds].sort(),
-      locatorCandidates: [...step.locatorCandidates].sort(),
+      targetElementIds: [...(step.targetElementIds ?? [])].sort(),
+      locatorCandidates: [...(step.locatorCandidates ?? [])].sort(),
     }))
     // Sorted by id so a reordered array cannot change the hash.
     .sort((a, b) => a.id.localeCompare(b.id));

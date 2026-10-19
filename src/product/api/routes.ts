@@ -23,6 +23,7 @@ import type { AuthConfig } from '../auth/identity.js';
 import { loadAuthConfigFromEnv, validateProductionAuthConfig } from '../auth/identity.js';
 import { authenticateRequest } from '../auth/middleware.js';
 import type { ArtifactType } from '../types/artifact.js';
+import type { ProductCandidateStatus } from '../types/candidate.js';
 import type { IdGenerator } from '../util/id.js';
 import { STYLES_CSS, CLIENT_JS_BUNDLE, renderDashboardHtmlShell } from '../dashboard/index.js';
 import { STAGING_PILOT_HTML } from './stagingFixture.js';
@@ -661,7 +662,20 @@ export async function handleProductApiRequest(
       }
       targetedWorkspaceId = workspaceId;
       const runs = await context.service.listRunsByProject(workspaceId, projectId, actorUserId);
-      sendJson(res, 200, { success: true, data: { runs }, requestId }, requestId);
+      const candidates = await context.service.listCandidates(workspaceId, projectId, actorUserId).catch(() => []);
+      const candCountsByRun = new Map<string, number>();
+      for (const c of candidates) {
+        candCountsByRun.set(c.runId, (candCountsByRun.get(c.runId) ?? 0) + 1);
+      }
+      const enrichedRuns = runs.map((r) => {
+        const count = candCountsByRun.get(r.id) ?? 0;
+        return {
+          ...r,
+          anomalyCount: r.anomalyCount ?? count,
+          candidateCount: r.candidateCount ?? count,
+        };
+      });
+      sendJson(res, 200, { success: true, data: { runs: enrichedRuns }, requestId }, requestId);
       return;
     }
 
@@ -810,7 +824,18 @@ export async function handleProductApiRequest(
       }
       targetedWorkspaceId = workspaceId;
       const run = await context.service.getRun(workspaceId, runId, actorUserId);
-      sendJson(res, 200, { success: true, data: run, requestId }, requestId);
+      let anomalyCount = run.anomalyCount;
+      let candidateCount = run.candidateCount;
+      if (candidateCount === undefined || anomalyCount === undefined) {
+        try {
+          const candidates = await context.service.listCandidatesByRun(workspaceId, runId, actorUserId);
+          candidateCount = candidates.length;
+          anomalyCount = anomalyCount ?? candidates.length;
+        } catch {
+          // Keep defaults if listCandidatesByRun fails
+        }
+      }
+      sendJson(res, 200, { success: true, data: { ...run, anomalyCount, candidateCount }, requestId }, requestId);
       return;
     }
 
@@ -923,6 +948,34 @@ export async function handleProductApiRequest(
       targetedWorkspaceId = workspaceId;
       const artifacts = await context.service.listArtifacts(workspaceId, runId, actorUserId);
       sendJson(res, 200, { success: true, data: { artifacts }, requestId }, requestId);
+      return;
+    }
+
+
+
+    // Candidate review endpoint: POST /api/v1/candidates/:candidateId/review
+    const candidateReviewMatch = pathname.match(/^\/api\/v1\/candidates\/([^/]+)\/review$/);
+    if (candidateReviewMatch && method === 'POST') {
+      const candidateId = candidateReviewMatch[1]!;
+      const body = await parseBody<{ workspaceId?: string; status?: ProductCandidateStatus; notes?: string }>(req);
+      const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
+      if (!workspaceId) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
+        return;
+      }
+      if (!body.status) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "status".', requestId);
+        return;
+      }
+      targetedWorkspaceId = workspaceId;
+      const reviewed = await context.service.reviewCandidate(
+        workspaceId,
+        candidateId,
+        body.status,
+        body.notes ?? '',
+        actorUserId,
+      );
+      sendJson(res, 200, { success: true, data: reviewed, requestId }, requestId);
       return;
     }
 

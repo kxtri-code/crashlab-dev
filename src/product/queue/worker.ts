@@ -40,6 +40,7 @@ export interface ExecutionWorkerResult {
   readonly executionReportRef?: string;
   readonly anomalyReportRef?: string;
   readonly reproductionReportRef?: string;
+  readonly candidatesReportRef?: string;
   readonly candidateRefs?: readonly string[];
   readonly artifacts?: readonly WorkerArtifactPayload[];
   readonly summary?: Record<string, unknown>;

@@ -97,7 +97,7 @@ export function buildCandidateReport(input: ReviewInput): CandidateReport {
     );
     comparisonLimitations.push('Comparison covers executed steps only, not the full journey plan.');
   }
-  if (input.execution.verification !== null && !input.execution.verification.complete) {
+  if (input.execution.verification && !input.execution.verification.complete) {
     comparisonLimitations.push(
       `The current run left ${input.execution.verification.unverifiedAssertions} expectation(s) unverified.`,
     );

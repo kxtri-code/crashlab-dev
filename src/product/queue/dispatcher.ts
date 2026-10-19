@@ -366,6 +366,7 @@ export class RunDispatcher {
     let executionReportRef = workerResult.executionReportRef;
     let anomalyReportRef = workerResult.anomalyReportRef;
     let reproductionReportRef = workerResult.reproductionReportRef;
+    let candidatesReportRef = workerResult.candidatesReportRef;
 
     if (workerResult.artifacts && workerResult.artifacts.length > 0) {
       try {
@@ -414,6 +415,42 @@ export class RunDispatcher {
             anomalyReportRef = createdArtifact.storagePath;
           } else if (artifact.type === 'reproduction' && !reproductionReportRef) {
             reproductionReportRef = createdArtifact.storagePath;
+          } else if (artifact.type === 'candidates' && !candidatesReportRef) {
+            candidatesReportRef = createdArtifact.storagePath;
+          }
+
+          if (artifact.type === 'candidates' && this.repos.candidates) {
+            try {
+              const rawCandidates = JSON.parse(
+                Buffer.isBuffer(artifact.payload)
+                  ? artifact.payload.toString('utf8')
+                  : String(artifact.payload),
+              );
+              const candidatesList = Array.isArray(rawCandidates?.candidates)
+                ? rawCandidates.candidates
+                : [];
+              for (const cand of candidatesList) {
+                const candId = cand.candidateId || cand.id || `cand-${randomUUID().slice(0, 16)}`;
+                await this.repos.candidates.create({
+                  id: `candref-${randomUUID().slice(0, 16)}`,
+                  schemaVersion: '1.0',
+                  workspaceId,
+                  projectId: item.projectId,
+                  runId,
+                  candidateId: candId,
+                  ruleId: cand.ruleId ?? 'UNKNOWN_RULE',
+                  classification: cand.classification ?? 'unknown',
+                  reproduced: Boolean(cand.reproduced),
+                  reviewStatus: 'unreviewed',
+                  confirmed: false,
+                  confirmedBug: false,
+                  createdAt: endTs,
+                  updatedAt: endTs,
+                });
+              }
+            } catch {
+              // Non-blocking for pipeline completion if candidate parsing fails
+            }
           }
         }
       } catch (storageErr) {
@@ -446,6 +483,7 @@ export class RunDispatcher {
       executionReportRef,
       anomalyReportRef,
       reproductionReportRef,
+      candidatesReportRef,
       finishedAt: endTs,
       updatedAt: endTs,
     });
