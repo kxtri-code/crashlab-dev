@@ -17,7 +17,9 @@ import {
   EntityNotFoundError,
   InvalidEntityRelationError,
   PreflightRefusedError,
+  ReproductionConcurrencyError,
 } from '../service/productService.js';
+import type { TargetAuthConfig } from '../types/target.js';
 import type { ApiResponse, HealthResponse } from './types.js';
 import type { AuthConfig } from '../auth/identity.js';
 import { loadAuthConfigFromEnv, validateProductionAuthConfig } from '../auth/identity.js';
@@ -487,6 +489,7 @@ export async function handleProductApiRequest(
         forbiddenActions?: string[];
         resetProcedure?: string;
         testingWindow?: string;
+        authConfig?: TargetAuthConfig;
       }>(req);
       const projectId = projectTargetsMatch ? projectTargetsMatch[1]! : body.projectId;
       if (!body.workspaceId || !projectId || !body.name || !body.targetUrl || !body.environment) {
@@ -517,6 +520,7 @@ export async function handleProductApiRequest(
           forbiddenActions: body.forbiddenActions,
           resetProcedure: body.resetProcedure,
           testingWindow: body.testingWindow,
+          authConfig: body.authConfig,
         },
         actorUserId,
       );
@@ -1105,6 +1109,12 @@ export async function handleProductApiRequest(
       sendError(res, 422, 'PREFLIGHT_BLOCKED', err.message, requestId, {
         failureReasons: err.failureReasons,
         status: err.preflightStatus,
+      }, corsHeaders);
+      return;
+    }
+    if (err instanceof ReproductionConcurrencyError) {
+      sendError(res, 429, 'CONCURRENCY_LIMIT', err.message, requestId, {
+        retryAfterSeconds: 15,
       }, corsHeaders);
       return;
     }

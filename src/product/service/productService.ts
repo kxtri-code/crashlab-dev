@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { User, CreateUserInput } from '../types/user.js';
 import type { Workspace, WorkspaceMember, CreateWorkspaceInput, AddWorkspaceMemberInput, WorkspaceRole } from '../types/workspace.js';
 import type { Project, CreateProjectInput } from '../types/project.js';
-import type { TargetEnvironment, CreateTargetEnvironmentInput } from '../types/target.js';
+import type { TargetEnvironment, CreateTargetEnvironmentInput, TargetAuthConfig, TargetAuthStrategy } from '../types/target.js';
 import type { ProductApprovedJourney, CreateApprovedJourneyInput } from '../types/journey.js';
 import type { TestRun, CreateTestRunInput, RunStatus } from '../types/run.js';
 import type { RunArtifact, RegisterArtifactInput, StoreArtifactInput } from '../types/artifact.js';
@@ -83,6 +83,13 @@ export class PreflightRefusedError extends Error {
   }
 }
 
+export class ReproductionConcurrencyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReproductionConcurrencyError';
+  }
+}
+
 export interface ProductServiceDependencies {
   readonly repositories: ProductRepositories;
   readonly runQueue?: RunQueueRepository;
@@ -99,6 +106,7 @@ export class ProductService {
   private readonly ids: IdGenerator;
   private readonly clock: () => Date;
   private readonly reproduceSignalsFn: typeof reproduceSignals;
+  private activeReproductionRunId: string | null = null;
 
   constructor(deps: ProductServiceDependencies) {
     this.repos = deps.repositories;
@@ -380,6 +388,24 @@ export class ProductService {
     const urlObj = new URL(input.targetUrl);
     const targetOrigin = urlObj.origin;
 
+    const authConfig: TargetAuthConfig = input.authConfig
+      ? {
+          strategy: input.authConfig.strategy || 'public',
+          credentialReference: input.authConfig.credentialReference?.trim() || undefined,
+          headerName: input.authConfig.headerName?.trim() || undefined,
+          usernameReference: input.authConfig.usernameReference?.trim() || undefined,
+          description: input.authConfig.description?.trim() || undefined,
+          credentialConfigured: input.authConfig.credentialReference
+            ? Boolean(process.env[input.authConfig.credentialReference.trim()])
+            : undefined,
+        }
+      : { strategy: 'public' };
+
+    let testDataReference = input.testDataReference;
+    if (!testDataReference && authConfig.strategy !== 'public') {
+      testDataReference = `auth:${JSON.stringify(authConfig)}`;
+    }
+
     const ts = this.timestamp();
     const target: TargetEnvironment = {
       id: this.ids.generateId('tgt'),
@@ -392,8 +418,9 @@ export class ProductService {
       targetOrigin,
       allowedOrigins: Object.freeze([...input.allowedOrigins]),
       appBuildId: input.appBuildId,
+      authConfig,
       authorizationReference: input.authorizationReference,
-      testDataReference: input.testDataReference,
+      testDataReference,
       forbiddenActions: Object.freeze([...(input.forbiddenActions ?? ['checkout', 'payment', 'delete_account', 'change_password'])]),
       resetProcedure: input.resetProcedure,
       testingWindow: input.testingWindow,
@@ -407,9 +434,35 @@ export class ProductService {
       name: created.name,
       environment: created.environment,
       targetOrigin: created.targetOrigin,
+      authStrategy: authConfig.strategy,
     });
 
-    return created;
+    return this.enrichTarget(created);
+  }
+
+  private enrichTarget(target: TargetEnvironment): TargetEnvironment {
+    let authConfig = target.authConfig;
+    if (!authConfig && target.testDataReference && target.testDataReference.startsWith('auth:')) {
+      try {
+        authConfig = JSON.parse(target.testDataReference.slice(5));
+      } catch {}
+    }
+    if (authConfig) {
+      const configured = authConfig.credentialReference
+        ? Boolean(process.env[authConfig.credentialReference.trim()])
+        : undefined;
+      return {
+        ...target,
+        authConfig: {
+          ...authConfig,
+          credentialConfigured: configured,
+        },
+      };
+    }
+    return {
+      ...target,
+      authConfig: { strategy: 'public' },
+    };
   }
 
   async getTarget(workspaceId: string, targetId: string, actorUserId: string): Promise<TargetEnvironment> {
@@ -421,7 +474,7 @@ export class ProductService {
     if (!target) {
       throw new EntityNotFoundError(`Target "${targetId}" not found in workspace "${workspaceId}".`);
     }
-    return target;
+    return this.enrichTarget(target);
   }
 
   async listTargets(workspaceId: string, projectId: string, actorUserId: string): Promise<readonly TargetEnvironment[]> {
@@ -429,7 +482,8 @@ export class ProductService {
     if (!canReadWorkspace(membership, workspaceId)) {
       throw new TenantAccessDeniedError(`Access denied to workspace "${workspaceId}".`);
     }
-    return this.repos.targets.listByProject(workspaceId, projectId);
+    const targets = await this.repos.targets.listByProject(workspaceId, projectId);
+    return targets.map((t) => this.enrichTarget(t));
   }
 
   // --- Approved Journeys -----------------------------------------------------
@@ -1119,30 +1173,34 @@ export class ProductService {
       return false;
     });
 
+    const attemptsRequested = reproReport.reproducer?.attemptsRequested ?? 3;
+    const attemptsCompleted = reproReport.reproducer?.attemptsCompleted ?? 0;
+    const attemptsFailed = reproReport.reproducer?.attemptsFailed ?? Math.max(0, attemptsRequested - attemptsCompleted);
+
     const failedRun = reproReport.runs?.find((r) => r.detail);
     const runFailureReason =
       failedRun?.detail ||
-      (reproReport.reproducer.attemptsFailed > 0
-        ? `${reproReport.reproducer.attemptsFailed} attempt(s) failed or were blocked.`
+      (attemptsFailed > 0
+        ? `${attemptsFailed} attempt(s) failed or were blocked.`
         : undefined);
 
     if (!match) {
       const state: CandidateReproductionStatus =
-        reproReport.reproducer.attemptsCompleted > 0 ? 'not-reproduced' : 'inconclusive';
+        attemptsCompleted > 0 ? 'not-reproduced' : 'inconclusive';
       return {
         ...candidate,
         reproductionStatus: state,
         reproduced: false,
         reproductionRatio:
-          reproReport.reproducer.attemptsCompleted > 0 ? `0/${reproReport.reproducer.attemptsCompleted}` : '0/0',
+          attemptsCompleted > 0 ? `0/${attemptsCompleted}` : '0/0',
         reproductionDetails: {
           state,
-          attemptsRequested: reproReport.reproducer.attemptsRequested,
-          attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+          attemptsRequested,
+          attemptsCompleted,
           signalsEvaluated: reproReport.summary.eligibleSignals,
           signalsReproduced: reproReport.summary.reproduced,
           recurrenceRatio:
-            reproReport.reproducer.attemptsCompleted > 0 ? `0/${reproReport.reproducer.attemptsCompleted}` : '0/0',
+            attemptsCompleted > 0 ? `0/${attemptsCompleted}` : '0/0',
           finalClassification: state,
           operatorReason: runFailureReason || 'No matching signal evaluated during reproduction rerun.',
         },
@@ -1165,8 +1223,8 @@ export class ProductService {
       reproductionRatio: match.reproductionRatio,
       reproductionDetails: {
         state,
-        attemptsRequested: reproReport.reproducer.attemptsRequested,
-        attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+        attemptsRequested,
+        attemptsCompleted,
         signalsEvaluated: reproReport.summary.eligibleSignals,
         signalsReproduced: reproReport.summary.reproduced,
         recurrenceRatio: match.reproductionRatio,
@@ -1244,8 +1302,17 @@ export class ProductService {
       throw new Error(`No candidate findings found for run "${runId}" to reproduce.`);
     }
 
-    // Strict maximum of 3 attempts enforcement (Requirement 3)
-    const requestedAttempts = options?.attempts ?? 3;
+    // Concurrency guard: limit in-flight reproductions on API container (Requirement 7)
+    if (this.activeReproductionRunId) {
+      throw new ReproductionConcurrencyError(
+        `A bounded reproduction is already executing for run "${this.activeReproductionRunId}". To prevent API container resource exhaustion, concurrent reproductions are limited to 1 at a time. Please wait for the active reproduction to complete.`
+      );
+    }
+    this.activeReproductionRunId = runId;
+
+    try {
+      // Strict maximum of 3 attempts enforcement (Requirement 3)
+      const requestedAttempts = options?.attempts ?? 3;
     const boundedAttempts = Math.min(3, Math.max(1, requestedAttempts));
 
     // Retrieve or construct anomaly report
@@ -1428,16 +1495,19 @@ export class ProductService {
     // Record audit event
     await this.recordAudit(workspaceId, actorUserId, 'run.reproduced', 'test_run', runId, {
       attemptsRequested: requestedAttempts,
-      attemptsCompleted: reproReport.reproducer.attemptsCompleted,
+      attemptsCompleted: reproReport.reproducer?.attemptsCompleted ?? requestedAttempts,
       signalsEvaluated: reproReport.summary.eligibleSignals,
       signalsReproduced: reproReport.summary.reproduced,
       summary: reproReport.summary,
     });
 
-    return {
-      reproductionReport: reproReport,
-      candidates: updatedCandidates,
-    };
+      return {
+        reproductionReport: reproReport,
+        candidates: updatedCandidates,
+      };
+    } finally {
+      this.activeReproductionRunId = null;
+    }
   }
 
   // --- Run Artifacts ---------------------------------------------------------

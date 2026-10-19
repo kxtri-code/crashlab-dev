@@ -465,6 +465,18 @@ export const CLIENT_JS_BUNDLE: string = `
           const prjRes = await api.getJson(\`/api/v1/projects?workspaceId=\${wsId}\`);
           if (prjRes.success) {
             state.projects = prjRes.data.projects || [];
+            if (path === 'overview' && state.projects.length > 0) {
+              const primaryPrj = state.selectedProject || state.projects[0];
+              state.selectedProject = primaryPrj;
+              const [tRes, jRes, rRes] = await Promise.all([
+                api.getJson(\`/api/v1/projects/\${primaryPrj.id}/targets?workspaceId=\${wsId}\`).catch(() => null),
+                api.getJson(\`/api/v1/projects/\${primaryPrj.id}/journeys?workspaceId=\${wsId}\`).catch(() => null),
+                api.getJson(\`/api/v1/projects/\${primaryPrj.id}/runs?workspaceId=\${wsId}\`).catch(() => null),
+              ]);
+              if (tRes && tRes.success) state.targets = tRes.data.targets || [];
+              if (jRes && jRes.success) state.journeys = jRes.data.journeys || [];
+              if (rRes && rRes.success) state.runs = rRes.data.runs || [];
+            }
           }
         }
 
@@ -935,6 +947,116 @@ export const CLIENT_JS_BUNDLE: string = `
     return renderDevelopmentAuthView();
   }
 
+  function renderOnboardingChecklist() {
+    const hasTarget = state.targets && state.targets.length > 0;
+    const hasJourney = state.journeys && state.journeys.length > 0;
+    const completedRuns = (state.runs || []).filter(r => r.status === 'completed');
+    const hasBaseline = completedRuns.some(r => (r.anomalyCount ?? r.candidateCount ?? 0) === 0);
+    const runsWithIssues = (state.runs || []).filter(r => (r.anomalyCount ?? r.candidateCount ?? 0) > 0);
+    const hasReviewedFindings = (state.candidates && state.candidates.length > 0 && state.candidates.some(c => c.status !== 'unreviewed')) ||
+      (state.runs || []).some(r => r.metadata?.lastReviewedAt || r.metadata?.reviewedCount);
+    const hasReproductionCompleted = Boolean(
+      (state.selectedRun && state.selectedRun.metadata?.reproductionReport) ||
+      (state.runs || []).some(r => r.metadata?.reproductionReport || r.metadata?.reproductionStatus === 'completed') ||
+      (state.artifacts || []).some(a => a.type === 'anomalies' || (a.name && a.name.includes('reproduction')))
+    );
+
+    const primaryPrjId = state.selectedProject ? state.selectedProject.id : (state.projects[0] ? state.projects[0].id : '');
+    const targetUrl = primaryPrjId ? '#/projects/' + primaryPrjId : '#/projects';
+    const issuesUrl = runsWithIssues.length > 0 ? '#/run-detail/' + runsWithIssues[0].id : targetUrl;
+
+    const steps = [
+      {
+        id: 'step-target',
+        title: '1. Connect Staging Target',
+        desc: 'Register an external staging application with backend-agnostic authentication (public, email/pwd, cookie, OAuth, custom header).',
+        done: hasTarget,
+        actionUrl: targetUrl,
+        actionText: hasTarget ? 'Target Connected' : 'Connect Target &rarr;',
+      },
+      {
+        id: 'step-journey',
+        title: '2. Approve Critical Journey',
+        desc: 'Declare explicitly bounded interaction goals and prohibited actions for safe-test execution.',
+        done: hasJourney,
+        actionUrl: targetUrl,
+        actionText: hasJourney ? 'Journey Approved' : 'Approve Journey &rarr;',
+      },
+      {
+        id: 'step-baseline',
+        title: '3. Run Healthy Baseline',
+        desc: 'Execute your approved journey against a healthy build to verify 0 candidate anomalies and establish benchmark.',
+        done: hasBaseline,
+        actionUrl: targetUrl,
+        actionText: hasBaseline ? 'Baseline Completed' : 'Run Baseline &rarr;',
+      },
+      {
+        id: 'step-findings',
+        title: '4. Review & Correlate Findings',
+        desc: 'Inspect automated signals, correlate root causes with downstream console errors, and track review states.',
+        done: hasReviewedFindings || (runsWithIssues.length > 0 && !hasBaseline),
+        actionUrl: issuesUrl,
+        actionText: (hasReviewedFindings || runsWithIssues.length > 0) ? 'Findings Reviewed' : 'Review Findings &rarr;',
+      },
+      {
+        id: 'step-reproduction',
+        title: '5. Complete Bounded Reproduction',
+        desc: 'Rerun 3 fresh browser attempts under identical conditions to measure recurrence ratio and prove persistence.',
+        done: hasReproductionCompleted,
+        actionUrl: issuesUrl,
+        actionText: hasReproductionCompleted ? 'Reproduction Proven' : 'Reproduce Signals &rarr;',
+      },
+    ];
+
+    const completedCount = steps.filter(s => s.done).length;
+    const progressPercent = Math.round((completedCount / steps.length) * 100);
+
+    const stepItems = steps.map(s => \`
+      <div class="onboarding-step-item \${s.done ? 'step-done' : ''}">
+        <div class="onboarding-step-badge">\${s.done ? '✓' : '○'}</div>
+        <div class="onboarding-step-content">
+          <div class="onboarding-step-title">\${escapeHtml(s.title)}</div>
+          <div class="onboarding-step-desc">\${escapeHtml(s.desc)}</div>
+        </div>
+        <div class="onboarding-step-action">
+          <a href="\${s.actionUrl}" class="btn \${s.done ? 'btn-secondary btn-sm' : 'btn-primary btn-sm'}">\${s.actionText}</a>
+        </div>
+      </div>
+    \`).join('');
+
+    return \`
+      <div class="panel onboarding-panel" style="margin-bottom:1.5rem;border-color:rgba(14,165,233,0.3);">
+        <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+          <div>
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+              <span class="badge" style="background:rgba(14,165,233,0.15);color:#38bdf8;border:1px solid rgba(14,165,233,0.3);font-size:0.7rem;">Pilot Onboarding</span>
+              <h2 class="panel-title" style="margin:0;">Pilot Readiness &amp; Verification Checklist</h2>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin:0;">Track end-to-end pilot readiness from staging connection to verified signal reproduction.</p>
+          </div>
+          <div style="text-align:right;">
+            <span style="font-size:0.85rem;font-weight:700;color:\${completedCount === 5 ? '#10b981' : '#38bdf8'};">\${completedCount} of \${steps.length} Milestones Completed (\${progressPercent}%)</span>
+          </div>
+        </div>
+
+        <div class="onboarding-progress-track" style="margin:0.75rem 0 1.25rem 0;background:rgba(255,255,255,0.06);height:6px;border-radius:3px;overflow:hidden;">
+          <div style="background:linear-gradient(90deg, #0ea5e9, #10b981);height:100%;width:\${progressPercent}%;transition:width 0.3s ease;"></div>
+        </div>
+
+        <div class="onboarding-step-list">
+          \${stepItems}
+        </div>
+
+        <div class="system-boundary-box" style="margin-top:1.25rem;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:6px;padding:0.75rem 1rem;font-size:0.8rem;color:#fcd34d;display:flex;gap:0.75rem;align-items:flex-start;">
+          <span style="font-size:1.1rem;line-height:1;">⚠️</span>
+          <div>
+            <strong>Architecture Boundary Notice:</strong> CrashLab operates strictly at the browser, HTTP, and network telemetry layer. It observes DOM mutations, console output, and network request/response traffic. CrashLab does <strong>not</strong> directly query, mutate, or inspect customer internal databases (e.g. MongoDB, DynamoDB, Supabase, PostgreSQL).
+          </div>
+        </div>
+      </div>
+    \`;
+  }
+
   function renderOverviewView() {
     const userName = state.currentUser ? (state.currentUser.name || 'Pilot Operator') : 'Pilot Operator';
     const totalProjects = state.projects.length;
@@ -1017,6 +1139,8 @@ export const CLIENT_JS_BUNDLE: string = `
       </div>
 
       \${renderTrustBanner()}
+
+      \${renderOnboardingChecklist()}
 
       <!-- Summary Cards -->
       <div class="grid-cards">
@@ -1122,29 +1246,51 @@ export const CLIENT_JS_BUNDLE: string = `
       return '<div class="state-box"><h3>Project not found</h3><p><a href="#/projects" class="btn btn-secondary">Back to Projects</a></p></div>';
     }
 
-    const targetCards = state.targets.map(t => \`
-      <div class="target-card" style="margin-bottom:0.75rem;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-          <div>
-            <h4 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin-bottom:0.25rem;">\${escapeHtml(t.name)}</h4>
-            <div style="font-size:0.8rem;color:var(--text-muted);">
-              Testing Origin: <code style="color:#38bdf8;">\${escapeHtml(t.targetOrigin || t.targetUrl)}</code>
+    const targetCards = state.targets.map(t => {
+      const authStrat = t.authConfig ? t.authConfig.strategy : 'public';
+      const stratLabels = {
+        public: 'Public Staging (No Auth)',
+        basic_credentials: 'Test Email/Password',
+        cookies_session: 'Protected Session/Cookie',
+        oauth_session: 'OAuth Test Session',
+        custom_header: 'Custom Header/Token',
+      };
+      const stratDisplay = stratLabels[authStrat] || authStrat;
+      const credStatus = t.authConfig?.credentialConfigured !== undefined
+        ? (t.authConfig.credentialConfigured ? '<span style="color:#10b981;">✓ Env secret verified</span>' : '<span style="color:#f59e0b;">⚠️ Env secret pending</span>')
+        : (authStrat === 'public' ? '<span style="color:var(--text-dim);">&bull; No credentials required</span>' : '');
+
+      return \`
+        <div class="target-card" style="margin-bottom:0.75rem;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+                <h4 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">\${escapeHtml(t.name)}</h4>
+                <span class="badge" style="background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);font-size:0.7rem;">\${escapeHtml(stratDisplay)}</span>
+              </div>
+              <div style="font-size:0.8rem;color:var(--text-muted);">
+                Testing Origin: <code style="color:#38bdf8;">\${escapeHtml(t.targetOrigin || t.targetUrl)}</code>
+              </div>
             </div>
+            <span class="status-pill \${t.environment === 'staging' ? 'preflight' : 'created'}">\${escapeHtml(t.environment)}</span>
           </div>
-          <span class="status-pill \${t.environment === 'staging' ? 'preflight' : 'created'}">\${escapeHtml(t.environment)}</span>
-        </div>
-        <div style="margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border-subtle);display:flex;justify-content:space-between;font-size:0.75rem;">
-          <span style="color:#10b981;">&bull; Safe-Test Status: Active</span>
-        </div>
-        <details class="tech-details-disclosure" style="margin-top:0.5rem;">
-          <summary class="tech-details-summary" style="padding:0.35rem 0.6rem;font-size:0.72rem;">Technical details</summary>
-          <div class="tech-details-content" style="padding:0.5rem;font-size:0.75rem;">
-            <div><strong>Target ID:</strong> <code>\${escapeHtml(t.id)}</code></div>
-            <div><strong>Authorization Reference:</strong> <code>\${escapeHtml(t.authorizationReference || 'None')}</code></div>
+          <div style="margin-top:0.75rem;padding-top:0.5rem;border-top:1px solid var(--border-subtle);display:flex;justify-content:space-between;font-size:0.75rem;">
+            <span style="color:#10b981;">&bull; Safe-Test Status: Active</span>
+            \${credStatus}
           </div>
-        </details>
-      </div>
-    \`).join('');
+          <details class="tech-details-disclosure" style="margin-top:0.5rem;">
+            <summary class="tech-details-summary" style="padding:0.35rem 0.6rem;font-size:0.72rem;">Technical details</summary>
+            <div class="tech-details-content" style="padding:0.5rem;font-size:0.75rem;">
+              <div><strong>Target ID:</strong> <code>\${escapeHtml(t.id)}</code></div>
+              <div><strong>Auth Strategy:</strong> <code>\${escapeHtml(authStrat)}</code></div>
+              \${t.authConfig?.credentialReference ? \`<div><strong>Credential Ref:</strong> <code>\${escapeHtml(t.authConfig.credentialReference)}</code></div>\` : ''}
+              \${t.authConfig?.headerName ? \`<div><strong>Header Name:</strong> <code>\${escapeHtml(t.authConfig.headerName)}</code></div>\` : ''}
+              <div><strong>Authorization Reference:</strong> <code>\${escapeHtml(t.authorizationReference || 'None')}</code></div>
+            </div>
+          </details>
+        </div>
+      \`;
+    }).join('');
 
     const journeyCards = state.journeys.map(j => {
       const tgt = state.targets.find(t => t.id === j.targetEnvironmentId) || state.targets[0];
@@ -1315,6 +1461,47 @@ export const CLIENT_JS_BUNDLE: string = `
               <label class="form-label" for="input-target-origins">Allowed Origins</label>
               <input id="input-target-origins" class="form-input" type="text" value="https://crashlab-api.onrender.com" required>
             </div>
+
+            <!-- Target Authentication Strategy Options (Build 12L) -->
+            <div class="form-group">
+              <label class="form-label" for="select-target-auth-strategy">Target Authentication Strategy</label>
+              <select id="select-target-auth-strategy" class="form-input">
+                <option value="public" selected>Public Staging Site (No Authentication Required)</option>
+                <option value="basic_credentials">Test Email &amp; Password (Server Environment Secret)</option>
+                <option value="cookies_session">Protected Cookies / Session State (Server Environment Secret)</option>
+                <option value="oauth_session">OAuth Test Session (Server Mock Token)</option>
+                <option value="custom_header">Custom Header / Token (e.g. X-Staging-Access or Bearer)</option>
+              </select>
+              <div class="form-help">Backend-agnostic authentication for external staging applications.</div>
+            </div>
+
+            <div id="target-auth-fields" style="display:none;background:var(--bg-surface-elevated);border:1px solid var(--border-subtle);border-radius:6px;padding:0.75rem;margin-bottom:1rem;">
+              <div class="form-group" id="group-target-auth-username" style="display:none;">
+                <label class="form-label" for="input-target-auth-username">Test Username / Email Reference</label>
+                <input id="input-target-auth-username" class="form-input" type="text" placeholder="pilot-operator@company.test">
+                <div class="form-help">Safe non-secret test account identity.</div>
+              </div>
+
+              <div class="form-group" id="group-target-auth-header" style="display:none;">
+                <label class="form-label" for="input-target-auth-header">Custom Header Name</label>
+                <input id="input-target-auth-header" class="form-input" type="text" placeholder="e.g. X-Staging-Access or Authorization">
+                <div class="form-help">HTTP header to send on requests (e.g. Authorization or X-Staging-Access).</div>
+              </div>
+
+              <div class="form-group" id="group-target-auth-cred-ref">
+                <label class="form-label" for="input-target-auth-cred-ref">Server Environment Secret Name</label>
+                <input id="input-target-auth-cred-ref" class="form-input" type="text" placeholder="e.g. STAGING_AUTH_TOKEN or STAGING_USER_PWD">
+                <div class="form-help" style="color:#fcd34d;">
+                  🛡️ <strong>Zero-Secret Boundary:</strong> Enter only the environment variable name configured on the CrashLab server (e.g. <code>STAGING_AUTH_KEY</code>). Never enter raw passwords or tokens here. Secrets are never sent to the browser or stored in the database.
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label" for="input-target-auth-desc">Authentication Notes / Description</label>
+                <input id="input-target-auth-desc" class="form-input" type="text" placeholder="e.g. Staging QA mock token for checkout journey">
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label" for="input-target-auth-ref">Owner Authorization Reference</label>
               <input id="input-target-auth-ref" class="form-input" type="text" value="AUTH-STAGING-PILOT-12H" required>
@@ -1926,6 +2113,15 @@ export const CLIENT_JS_BUNDLE: string = `
           Safe-test mode is permanently active across all workers. Destructive actions (checkout, financial transfers, subscription mutations, password modifications, account deletions) are blocked before action dispatch.
         </p>
       </div>
+
+      <div class="panel">
+        <h2 class="panel-title" style="font-size:1.1rem;margin-bottom:0.75rem;">4. Telemetry Boundary &amp; Customer Database Isolation</h2>
+        <p style="color:var(--text-muted);font-size:0.875rem;line-height:1.6;">
+          CrashLab evaluates external staging applications strictly through browser interactions, HTTP status codes, and network telemetry.
+          CrashLab does <strong>not</strong> directly connect to, inspect, or modify customer internal data stores (such as MongoDB, DynamoDB, Supabase, or PostgreSQL).
+          All defect candidates originate from verifiable HTTP transactions, client DOM mutations, and console logs.
+        </p>
+      </div>
     \`;
   }
 
@@ -1934,10 +2130,91 @@ export const CLIENT_JS_BUNDLE: string = `
       <div class="page-header">
         <div>
           <h1 class="page-title panel-title">Help &amp; Pilot Operator Guide</h1>
-          <p class="page-subtitle">Everything you need to know about managing automated staging test runs.</p>
+          <p class="page-subtitle">End-to-end walkthrough for onboarding staging applications and verifying defect reproduction.</p>
         </div>
       </div>
 
+      <!-- Architecture Boundary Notice Banner -->
+      <div class="system-boundary-box" style="margin-bottom:1.5rem;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:6px;padding:0.9rem 1.25rem;font-size:0.85rem;color:#fcd34d;display:flex;gap:0.75rem;align-items:flex-start;">
+        <span style="font-size:1.25rem;line-height:1;">⚠️</span>
+        <div>
+          <strong>System Boundary &amp; Database Disclaimer:</strong> CrashLab operates exclusively as an external black-box tester via headless Chromium. It observes user journeys, HTTP request/response traffic, and console output. CrashLab does <strong>not</strong> directly inspect, connect to, or alter customer databases (such as MongoDB, DynamoDB, Supabase, or PostgreSQL).
+        </div>
+      </div>
+
+      <!-- 6-Step Pilot Workflow Guide -->
+      <div class="panel" style="margin-bottom:1.5rem;">
+        <div class="panel-header">
+          <div>
+            <span class="badge" style="background:rgba(14,165,233,0.15);color:#38bdf8;border:1px solid rgba(14,165,233,0.3);font-size:0.7rem;margin-bottom:0.25rem;">Standard Operating Procedure</span>
+            <h2 class="panel-title">End-to-End Pilot Workflow (6 Steps)</h2>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:1rem;margin-top:0.75rem;">
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">1️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Register Staging Target</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Connect your staging target URL. Choose a backend-agnostic authentication strategy: <strong>public staging</strong>, <strong>test email/pwd</strong>, <strong>session cookie</strong>, <strong>OAuth mock token</strong>, or <strong>custom header</strong>. Raw credentials are never stored in the database or sent to the browser; references point to server environment variables.
+            </p>
+          </div>
+
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">2️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Create Approved Journey</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Specify the intended user flow (entry origin, steps, interactions). The preflight safety engine enforces strict boundaries: financial, account modification, and destructive operations are unconditionally prohibited.
+            </p>
+          </div>
+
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">3️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Run a Healthy Baseline</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Dispatch the approved journey against your normal staging build. Verify execution completes with <strong>0 possible issues</strong> and status <strong>Passed</strong>. This establishes your clean benchmark.
+            </p>
+          </div>
+
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">4️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Run Controlled Failure</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Simulate or execute an edge condition (e.g. invalid payload or staging fault). Confirm CrashLab captures the HTTP 5XX failure, records console exceptions, and extracts complete network timing evidence.
+            </p>
+          </div>
+
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">5️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Review &amp; Correlate Findings</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Inspect the candidate review table. Distinguish root cause candidates (e.g. HTTP 500) from downstream side-effects (e.g. JavaScript null pointer errors). Mark downstream errors as <strong>Duplicate</strong> and investigate root signals.
+            </p>
+          </div>
+
+          <div class="guide-step-card" style="background:var(--bg-surface-elevated);padding:1.1rem;border-radius:8px;border:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+              <span style="font-size:1.1rem;">6️⃣</span>
+              <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin:0;">Reproduce &amp; Download Evidence</h3>
+            </div>
+            <p style="font-size:0.825rem;color:var(--text-muted);line-height:1.5;margin:0;">
+              Trigger <strong>⚡ Run Bounded Reproduction</strong>. CrashLab runs 3 fresh browser contexts to confirm the recurrence ratio (e.g. 3/3 Reproduced). Download the complete provenance JSON, log files, and screenshots for engineering triage.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Candidate Review Statuses Reference -->
       <div class="panel">
         <h2 class="panel-title" style="font-size:1.1rem;margin-bottom:0.75rem;">Candidate Review Statuses</h2>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:1rem;margin-top:1rem;">
@@ -2295,6 +2572,28 @@ export const CLIENT_JS_BUNDLE: string = `
       });
     }
 
+    const authStratSelect = document.getElementById('select-target-auth-strategy');
+    if (authStratSelect) {
+      const updateAuthFields = () => {
+        const val = authStratSelect.value;
+        const container = document.getElementById('target-auth-fields');
+        const usernameGrp = document.getElementById('group-target-auth-username');
+        const headerGrp = document.getElementById('group-target-auth-header');
+        const credRefGrp = document.getElementById('group-target-auth-cred-ref');
+        if (!container) return;
+        if (val === 'public') {
+          container.style.display = 'none';
+        } else {
+          container.style.display = 'block';
+          if (usernameGrp) usernameGrp.style.display = val === 'basic_credentials' ? 'block' : 'none';
+          if (headerGrp) headerGrp.style.display = val === 'custom_header' ? 'block' : 'none';
+          if (credRefGrp) credRefGrp.style.display = 'block';
+        }
+      };
+      authStratSelect.addEventListener('change', updateAuthFields);
+      updateAuthFields();
+    }
+
     const submitTargetBtn = document.getElementById('btn-submit-target');
     if (submitTargetBtn) {
       submitTargetBtn.addEventListener('click', async () => {
@@ -2305,6 +2604,12 @@ export const CLIENT_JS_BUNDLE: string = `
         const originsInput = document.getElementById('input-target-origins');
         const authRefInput = document.getElementById('input-target-auth-ref');
 
+        const authSelect = document.getElementById('select-target-auth-strategy');
+        const authUsernameInput = document.getElementById('input-target-auth-username');
+        const authHeaderInput = document.getElementById('input-target-auth-header');
+        const authCredRefInput = document.getElementById('input-target-auth-cred-ref');
+        const authDescInput = document.getElementById('input-target-auth-desc');
+
         const name = nameInput ? nameInput.value.trim() : '';
         const environment = envInput ? envInput.value.trim() : 'staging';
         const targetUrl = urlInput ? urlInput.value.trim() : '';
@@ -2312,6 +2617,17 @@ export const CLIENT_JS_BUNDLE: string = `
           ? originsInput.value.split(',').map(s => s.trim()).filter(Boolean)
           : [];
         const authorizationReference = authRefInput ? authRefInput.value.trim() : '';
+
+        const strategy = authSelect ? authSelect.value : 'public';
+        const authConfig = strategy === 'public'
+          ? { strategy: 'public' }
+          : {
+              strategy,
+              usernameReference: authUsernameInput ? authUsernameInput.value.trim() || undefined : undefined,
+              headerName: authHeaderInput ? authHeaderInput.value.trim() || undefined : undefined,
+              credentialReference: authCredRefInput ? authCredRefInput.value.trim() || undefined : undefined,
+              description: authDescInput ? authDescInput.value.trim() || undefined : undefined,
+            };
 
         if (!name || !targetUrl) {
           state.targetError = 'Name and Target URL are required.';
@@ -2331,6 +2647,7 @@ export const CLIENT_JS_BUNDLE: string = `
             targetUrl,
             allowedOrigins,
             authorizationReference,
+            authConfig,
           });
           if (res && res.success && res.data) {
             state.targets.push(res.data);

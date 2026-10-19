@@ -448,7 +448,7 @@ describe('Build 12E: Render Private-Beta Deployment Package', () => {
       expect(content).toContain('dist/product/api/main.js');
       expect(content).toContain('PRODUCT_WORKER_ENABLED=false');
       expect(content).not.toContain('COPY .env');
-      expect(content).not.toContain('playwright install'); // Zero browser execution in API
+      expect(content).toContain('playwright install chromium'); // Bounded reproduction enabled in API web service for pilot
     });
 
     it('15. Dockerfile.worker requires PRODUCT_WORKER_ENABLED via env, runs as non-root', () => {
