@@ -1092,11 +1092,10 @@ export class ProductService {
     candidate: CandidateReference,
     reproReport?: ReproductionReport | null,
   ): CandidateReference {
-    if (candidate.reproductionDetails && candidate.reproductionStatus) {
-      return candidate;
-    }
-
     if (!reproReport) {
+      if (candidate.reproductionDetails && candidate.reproductionStatus) {
+        return candidate;
+      }
       return {
         ...candidate,
         reproductionStatus: 'not-tested',
@@ -1120,20 +1119,32 @@ export class ProductService {
       return false;
     });
 
+    const failedRun = reproReport.runs?.find((r) => r.detail);
+    const runFailureReason =
+      failedRun?.detail ||
+      (reproReport.reproducer.attemptsFailed > 0
+        ? `${reproReport.reproducer.attemptsFailed} attempt(s) failed or were blocked.`
+        : undefined);
+
     if (!match) {
+      const state: CandidateReproductionStatus =
+        reproReport.reproducer.attemptsCompleted > 0 ? 'not-reproduced' : 'inconclusive';
       return {
         ...candidate,
-        reproductionStatus: 'not-tested',
+        reproductionStatus: state,
         reproduced: false,
-        reproductionRatio: 'Not tested',
+        reproductionRatio:
+          reproReport.reproducer.attemptsCompleted > 0 ? `0/${reproReport.reproducer.attemptsCompleted}` : '0/0',
         reproductionDetails: {
-          state: 'not-tested',
+          state,
           attemptsRequested: reproReport.reproducer.attemptsRequested,
           attemptsCompleted: reproReport.reproducer.attemptsCompleted,
           signalsEvaluated: reproReport.summary.eligibleSignals,
           signalsReproduced: reproReport.summary.reproduced,
-          recurrenceRatio: '0/0',
-          finalClassification: 'not-tested',
+          recurrenceRatio:
+            reproReport.reproducer.attemptsCompleted > 0 ? `0/${reproReport.reproducer.attemptsCompleted}` : '0/0',
+          finalClassification: state,
+          operatorReason: runFailureReason || 'No matching signal evaluated during reproduction rerun.',
         },
       };
     }
@@ -1144,6 +1155,8 @@ export class ProductService {
         : match.classification === 'not-reproduced'
         ? 'not-reproduced'
         : 'inconclusive';
+
+    const operatorReason = runFailureReason || (state !== 'reproduced' ? match.reason : undefined);
 
     return {
       ...candidate,
@@ -1158,6 +1171,7 @@ export class ProductService {
         signalsReproduced: reproReport.summary.reproduced,
         recurrenceRatio: match.reproductionRatio,
         finalClassification: match.classification,
+        ...(operatorReason ? { operatorReason } : {}),
       },
     };
   }
@@ -1179,10 +1193,14 @@ export class ProductService {
     const candidates = await this.repos.candidates.listByRun(workspaceId, runId);
     let reproReport: ReproductionReport | null = null;
     try {
+      const run = await this.getRun(workspaceId, runId, actorUserId);
       const artifacts = await this.repos.artifacts.listByRun(workspaceId, runId);
-      const reproArt = artifacts.find((a) => a.type === 'reproduction');
-      if (reproArt) {
-        const { payload } = await this.getArtifactContent(workspaceId, reproArt.id, actorUserId);
+      const reproArts = artifacts
+        .filter((a) => a.type === 'reproduction')
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const targetArtId = run.reproductionReportRef || reproArts[0]?.id;
+      if (targetArtId) {
+        const { payload } = await this.getArtifactContent(workspaceId, targetArtId, actorUserId);
         reproReport = JSON.parse(payload.content.toString('utf8')) as ReproductionReport;
       }
     } catch {
@@ -1310,7 +1328,7 @@ export class ProductService {
         locatorCandidates: [],
         expectedOutcome: 'Page loads with HTTP 200 and DOM ready',
         confidence: 1.0,
-        executable: true,
+        executable: false,
         source: { report: 'synthetic', elementIds: [] },
         isFallback: false,
       },
@@ -1394,20 +1412,17 @@ export class ProductService {
     // Update candidate references in repository
     const updatedCandidates: CandidateReference[] = [];
     for (const cand of candidates) {
-      const match = reproReport.results.find((r) => {
-        if (r.anomalyId && (r.anomalyId === cand.candidateId || r.anomalyId === cand.id)) return true;
-        if (r.ruleId && r.ruleId === cand.ruleId) return true;
-        return false;
-      });
-
-      const isRepro = match?.classification === 'reproduced';
+      const enriched = this.enrichCandidateWithReproduction(cand, reproReport);
       const updatedCand: CandidateReference = {
         ...cand,
-        reproduced: isRepro,
+        reproduced: enriched.reproduced,
+        reproductionStatus: enriched.reproductionStatus,
+        reproductionRatio: enriched.reproductionRatio,
+        reproductionDetails: enriched.reproductionDetails,
         updatedAt: this.timestamp(),
       };
       const saved = await this.repos.candidates.update(updatedCand);
-      updatedCandidates.push(this.enrichCandidateWithReproduction(saved, reproReport));
+      updatedCandidates.push(saved);
     }
 
     // Record audit event

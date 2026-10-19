@@ -686,9 +686,15 @@ export const CLIENT_JS_BUNDLE: string = `
     renderApp();
 
     try {
+      const rootCandidate = state.candidates.find(c =>
+        (c.ruleId || '').toUpperCase().includes('5XX') ||
+        (c.ruleId || '').toUpperCase().includes('HTTP_5') ||
+        (c.classification || '').toUpperCase().includes('500')
+      );
       const res = await api.postJson('/api/v1/runs/' + runId + '/reproduce', {
         workspaceId: state.currentWorkspace.id,
         attempts: 3,
+        candidateId: rootCandidate ? (rootCandidate.candidateId || rootCandidate.id) : undefined,
       });
       if (res && res.success) {
         const s = res.data?.reproductionReport?.summary;
@@ -1539,17 +1545,10 @@ export const CLIENT_JS_BUNDLE: string = `
     const isCorrelatedCascade = Boolean(http5xxCandidate && consoleCandidates.length > 0);
 
     // Reproduction details extraction (Requirement 4)
-    const candidateWithRepro = state.candidates.find(c => c.reproductionDetails && c.reproductionStatus && c.reproductionStatus !== 'not-tested');
-    const reproDetails = candidateWithRepro?.reproductionDetails || (
-      state.artifacts.some(a => a.type === 'reproduction') ? {
-        attemptsRequested: 3,
-        attemptsCompleted: 3,
-        signalsEvaluated: state.candidates.length,
-        signalsReproduced: state.candidates.filter(c => c.reproduced).length,
-        recurrenceRatio: (state.candidates.filter(c => c.reproduced).length) + '/' + state.candidates.length,
-        finalClassification: state.candidates.some(c => c.reproduced) ? 'reproduced' : 'inconclusive',
-      } : null
-    );
+    const primaryCandidate = (http5xxCandidate && http5xxCandidate.reproductionDetails && http5xxCandidate.reproductionDetails.attemptsRequested > 0)
+      ? http5xxCandidate
+      : state.candidates.find(c => c.reproductionDetails && c.reproductionDetails.attemptsRequested > 0) || state.candidates[0];
+    const reproDetails = primaryCandidate?.reproductionDetails || null;
 
     // Candidate Review Cards (Item 9 & Build 12K.1)
     const candidateCards = state.candidates.map(c => {
@@ -1792,6 +1791,11 @@ export const CLIENT_JS_BUNDLE: string = `
                 <span class="repro-metric-value" style="font-size:0.95rem;text-transform:capitalize;">\${reproDetails.finalClassification}</span>
               </div>
             </div>
+            \${reproDetails.operatorReason ? \`
+              <div class="repro-operator-reason-box" style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:6px;padding:0.6rem 0.9rem;margin-top:0.75rem;font-size:0.8rem;color:#fcd34d;">
+                ⚠️ <strong>Operator Notice:</strong> \${escapeHtml(reproDetails.operatorReason)}
+              </div>
+            \` : ''}
           \` : ''}
         \` : ''}
 

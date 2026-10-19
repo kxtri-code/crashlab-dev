@@ -31,19 +31,38 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 FROM node:20-bookworm-slim
 
-# Install system dependencies required for health checks
+# Install system dependencies required for health checks and headless Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Configure production environment defaults
+# Configure production environment defaults & Playwright browser cache
 ENV NODE_ENV=production \
     PORT=3220 \
     HOST=0.0.0.0 \
-    PRODUCT_WORKER_ENABLED=false
+    PRODUCT_WORKER_ENABLED=false \
+    PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+
+# Prepare cache directories for non-root node user
+RUN mkdir -p /home/node/.cache/ms-playwright && chown -R node:node /home/node
 
 # Copy package manifests and install ONLY production dependencies
 COPY package*.json ./
@@ -53,8 +72,9 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/product/dashboard/styles.css ./dist/product/dashboard/styles.css
 
-# Switch to non-root user
+# Switch to non-root user and install Chromium
 USER node
+RUN npx playwright install chromium
 
 # Health check probe against local port
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

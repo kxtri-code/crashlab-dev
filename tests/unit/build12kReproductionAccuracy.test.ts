@@ -884,4 +884,270 @@ describe('Build 12K.1: Candidate Reproduction UX and Signal-State Accuracy', () 
       expect(CLIENT_JS_BUNDLE).not.toContain('postgresql://');
     });
   });
+
+  describe('8. Build 12K.2 Live Reproduction Fixes & Operator Reasons', () => {
+    it('populates operatorReason when reproduction attempts fail or are blocked', async () => {
+      const mockBlockedReproducer = async (input: ReproductionInput): Promise<ReproductionReport> => ({
+        schemaVersion: '1.0',
+        journeyReport: input.journeyPath,
+        anomalyReport: input.anomalyPath,
+        executionReport: input.executionPath,
+        goal: input.journey.goal,
+        summary: {
+          totalSignals: 1,
+          eligibleSignals: 1,
+          reproduced: 0,
+          notReproduced: 0,
+          inconclusive: 1,
+          blocked: 1,
+          ineligible: 0,
+          candidatesRequiringInvestigation: 0,
+        },
+        reproducer: {
+          mode: 'controlled-deterministic',
+          version: '1.0',
+          automaticRetries: false,
+          attemptsRequested: 3,
+          attemptsCompleted: 0,
+          attemptsBlocked: 0,
+          attemptsFailed: 3,
+        },
+        runs: [
+          {
+            attempt: 1,
+            name: 'attempt-001',
+            executionReport: 'runs/attempt-001/execution.json',
+            anomalyReport: 'runs/attempt-001/anomalies.json',
+            status: 'blocked',
+            detail: 'Chromium is not installed. Run `npx playwright install chromium` and try again.',
+            environment: { fingerprint: null, environmentId: null, applicationBuildId: null },
+          } as any,
+        ],
+        results: [
+          {
+            id: 'reproduction-001',
+            anomalyId: 'anom_blocked_01',
+            ruleId: 'HTTP_5XX',
+            classification: 'blocked',
+            confirmed: false,
+            matchingAttempts: 0,
+            completedAttempts: 0,
+            inconclusiveAttempts: 3,
+            reproductionRatio: '0/0',
+            matchingKey: 'HTTP_5XX|500|get|/probe|xhr',
+            evidence: [],
+            reason: 'Rerun was blocked before completion: Chromium is not installed.',
+            ineligibleBecause: null,
+            requiresInvestigation: false,
+            originalEnvironment: null,
+            attemptEnvironments: [],
+            environmentComparison: {
+              classification: 'unknown',
+              differences: [],
+              unknownReason: 'No runs completed',
+              interpretation: 'Unknown',
+            },
+          },
+        ],
+        expectations: null,
+        safety: {
+          authorizedConfirmationRequired: true,
+          safeTestMode: true,
+          livePaymentAllowed: false,
+          sensitiveValuesRedacted: true,
+          attemptsBlockedBySafety: 0,
+        },
+        interpretation: {
+          confirmedBug: false,
+          reproducedSignalsAreCandidatesOnly: true,
+          note: 'blocked',
+        },
+      });
+
+      service = new ProductService({
+        repositories: repos,
+        blobStore,
+        reproduceSignalsFn: mockBlockedReproducer as any,
+      });
+
+      await service.registerCandidate(
+        {
+          workspaceId,
+          projectId,
+          runId,
+          candidateId: 'anom_blocked_01',
+          ruleId: 'HTTP_5XX',
+          classification: 'HTTP_5XX',
+          reproduced: false,
+        },
+        userId,
+      );
+
+      const result = await service.runBoundedReproduction(workspaceId, runId, userId, { attempts: 3 });
+      const cand = result.candidates[0]!;
+
+      expect(cand.reproductionStatus).toBe('inconclusive');
+      expect(cand.reproductionDetails?.state).toBe('inconclusive');
+      expect(cand.reproductionDetails?.attemptsCompleted).toBe(0);
+      expect(cand.reproductionDetails?.recurrenceRatio).toBe('0/0');
+      expect(cand.reproductionDetails?.operatorReason).toContain('Chromium is not installed');
+
+      // Now run reproduction again with a successful 3/3 run, verifying stale cache is overwritten
+      const mockSuccessReproducer = async (input: ReproductionInput): Promise<ReproductionReport> => ({
+        schemaVersion: '1.0',
+        journeyReport: input.journeyPath,
+        anomalyReport: input.anomalyPath,
+        executionReport: input.executionPath,
+        goal: input.journey.goal,
+        summary: {
+          totalSignals: 1,
+          eligibleSignals: 1,
+          reproduced: 1,
+          notReproduced: 0,
+          inconclusive: 0,
+          blocked: 0,
+          ineligible: 0,
+          candidatesRequiringInvestigation: 1,
+        },
+        reproducer: {
+          mode: 'controlled-deterministic',
+          version: '1.0',
+          automaticRetries: false,
+          attemptsRequested: 3,
+          attemptsCompleted: 3,
+          attemptsBlocked: 0,
+          attemptsFailed: 0,
+        },
+        runs: [],
+        results: [
+          {
+            id: 'reproduction-001',
+            anomalyId: 'anom_blocked_01',
+            ruleId: 'HTTP_5XX',
+            classification: 'reproduced',
+            confirmed: false,
+            matchingAttempts: 3,
+            completedAttempts: 3,
+            inconclusiveAttempts: 0,
+            reproductionRatio: '3/3',
+            matchingKey: 'HTTP_5XX|500|get|/probe|xhr',
+            evidence: [],
+            reason: 'The same signal occurred in all 3 controlled attempts.',
+            ineligibleBecause: null,
+            requiresInvestigation: true,
+            originalEnvironment: null,
+            attemptEnvironments: [],
+            environmentComparison: {
+              classification: 'same',
+              differences: [],
+              unknownReason: null,
+              interpretation: 'Identical environment',
+            },
+          },
+        ],
+        expectations: null,
+        safety: {
+          authorizedConfirmationRequired: true,
+          safeTestMode: true,
+          livePaymentAllowed: false,
+          sensitiveValuesRedacted: true,
+          attemptsBlockedBySafety: 0,
+        },
+        interpretation: {
+          confirmedBug: false,
+          reproducedSignalsAreCandidatesOnly: true,
+          note: 'reproduced',
+        },
+      });
+
+      const service2 = new ProductService({
+        repositories: repos,
+        blobStore,
+        reproduceSignalsFn: mockSuccessReproducer as any,
+      });
+
+      const result2 = await service2.runBoundedReproduction(workspaceId, runId, userId, { attempts: 3 });
+      const updatedCand = result2.candidates[0]!;
+
+      expect(updatedCand.reproductionStatus).toBe('reproduced');
+      expect(updatedCand.reproduced).toBe(true);
+      expect(updatedCand.reproductionRatio).toBe('3/3');
+      expect(updatedCand.reproductionDetails?.attemptsCompleted).toBe(3);
+      expect(updatedCand.reproductionDetails?.recurrenceRatio).toBe('3/3');
+      expect(updatedCand.reproductionDetails?.operatorReason).toBeUndefined();
+    });
+
+    it('enforces plan steps have executable: false for planValidator contracts', async () => {
+      let recordedPlan: any = null;
+      const mockReproducer = async (input: ReproductionInput): Promise<ReproductionReport> => {
+        recordedPlan = input.journey;
+        return {
+          schemaVersion: '1.0',
+          journeyReport: input.journeyPath,
+          anomalyReport: input.anomalyPath,
+          executionReport: input.executionPath,
+          goal: input.journey.goal,
+          summary: {
+            totalSignals: 1,
+            eligibleSignals: 1,
+            reproduced: 1,
+            notReproduced: 0,
+            inconclusive: 0,
+            blocked: 0,
+            ineligible: 0,
+            candidatesRequiringInvestigation: 1,
+          },
+          reproducer: {
+            mode: 'controlled-deterministic',
+            version: '1.0',
+            automaticRetries: false,
+            attemptsRequested: 3,
+            attemptsCompleted: 3,
+            attemptsBlocked: 0,
+            attemptsFailed: 0,
+          },
+          runs: [],
+          results: [],
+          expectations: null,
+          safety: {
+            authorizedConfirmationRequired: true,
+            safeTestMode: true,
+            livePaymentAllowed: false,
+            sensitiveValuesRedacted: true,
+            attemptsBlockedBySafety: 0,
+          },
+          interpretation: {
+            confirmedBug: false,
+            reproducedSignalsAreCandidatesOnly: true,
+            note: 'reproduced',
+          },
+        };
+      };
+
+      service = new ProductService({
+        repositories: repos,
+        blobStore,
+        reproduceSignalsFn: mockReproducer as any,
+      });
+
+      await service.registerCandidate(
+        {
+          workspaceId,
+          projectId,
+          runId,
+          candidateId: 'anom_step_contract',
+          ruleId: 'HTTP_5XX',
+          classification: 'HTTP_5XX',
+          reproduced: false,
+        },
+        userId,
+      );
+
+      await service.runBoundedReproduction(workspaceId, runId, userId, { attempts: 3 });
+      expect(recordedPlan).not.toBeNull();
+      for (const step of recordedPlan.steps) {
+        expect(step.executable).toBe(false);
+      }
+    });
+  });
 });

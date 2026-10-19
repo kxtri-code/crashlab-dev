@@ -27,6 +27,7 @@ export interface CandidateReproductionDetails {
   readonly signalsReproduced: number;
   readonly recurrenceRatio: string;
   readonly finalClassification: string;
+  readonly operatorReason?: string;
 }
 
 export interface CandidateReference {
