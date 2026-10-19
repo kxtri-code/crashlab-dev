@@ -51,6 +51,7 @@ RUN npm ci --omit=dev
 
 # Copy compiled distribution from builder stage
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src/product/dashboard/styles.css ./dist/product/dashboard/styles.css
 
 # Switch to non-root user
 USER node

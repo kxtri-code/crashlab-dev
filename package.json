@@ -42,7 +42,7 @@
     "deploy:check": "tsx src/cli.ts deploy:check",
     "api": "tsx src/cli.ts api",
     "setup": "playwright install chromium",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"const fs = require('fs'); const dest = 'dist/product/dashboard'; if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true }); fs.copyFileSync('src/product/dashboard/styles.css', dest + '/styles.css');\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
