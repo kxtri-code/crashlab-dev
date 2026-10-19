@@ -809,6 +809,23 @@ export async function handleProductApiRequest(
         sendError(res, 404, 'NOT_FOUND', `Queue item for run "${runId}" not found.`, requestId);
         return;
       }
+      try {
+        const run = await context.service.getRun(workspaceId, runId, actorUserId);
+        const terminalStatuses = ['completed', 'partial', 'failed', 'blocked', 'cancelled'];
+        if (terminalStatuses.includes(run.status)) {
+          // Invariant: Terminal runs must never report an active lease or running worker state
+          const normalizedQueueItem = {
+            ...queueItem,
+            queueStatus: run.status === 'partial' ? 'completed' : run.status,
+            leaseOwner: null,
+            leaseExpiry: null,
+          };
+          sendJson(res, 200, { success: true, data: normalizedQueueItem, requestId }, requestId);
+          return;
+        }
+      } catch {
+        // Fall back to raw queueItem if run lookup fails
+      }
       sendJson(res, 200, { success: true, data: queueItem, requestId }, requestId);
       return;
     }
@@ -957,21 +974,22 @@ export async function handleProductApiRequest(
     const candidateReviewMatch = pathname.match(/^\/api\/v1\/candidates\/([^/]+)\/review$/);
     if (candidateReviewMatch && method === 'POST') {
       const candidateId = candidateReviewMatch[1]!;
-      const body = await parseBody<{ workspaceId?: string; status?: ProductCandidateStatus; notes?: string }>(req);
+      const body = await parseBody<{ workspaceId?: string; status?: ProductCandidateStatus; reviewStatus?: ProductCandidateStatus; notes?: string }>(req);
       const workspaceId = body.workspaceId ?? searchParams.get('workspaceId');
       if (!workspaceId) {
         sendError(res, 400, 'BAD_REQUEST', 'Missing required field "workspaceId".', requestId);
         return;
       }
-      if (!body.status) {
-        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "status".', requestId);
+      const reviewStatus = body.status ?? body.reviewStatus;
+      if (!reviewStatus) {
+        sendError(res, 400, 'BAD_REQUEST', 'Missing required field "status" or "reviewStatus".', requestId);
         return;
       }
       targetedWorkspaceId = workspaceId;
       const reviewed = await context.service.reviewCandidate(
         workspaceId,
         candidateId,
-        body.status,
+        reviewStatus,
         body.notes ?? '',
         actorUserId,
       );

@@ -10,6 +10,7 @@ export type ProductCandidateStatus =
   | 'investigating'
   | 'accepted'
   | 'dismissed'
+  | 'duplicate'
   | 'resolved';
 
 export interface CandidateReference {
